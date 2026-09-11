@@ -1,0 +1,2 @@
+[{"code":"en","native_name":"English","english_name":"English","direction":"ltr","enabled":true,"is_default":true,"fallback_code":null,"sort_order":10,"created_at":"2026-07-01T08:35:54.261453+00:00","updated_at":"2026-07-04T07:02:22.785498+00:00","is_launch_ready":true}, 
+ {"code":"ta","native_name":"தமிழ்","english_name":"Tamil","direction":"ltr","enabled":true,"is_default":false,"fallback_code":"en","sort_order":20,"created_at":"2026-07-01T08:35:54.261453+00:00","updated_at":"2026-07-04T07:02:22.785498+00:00","is_launch_ready":true}]

@@ -1,0 +1,92 @@
+# MERGE into /opt/supabase/stacks/enroll/docker-compose.override.yml
+#
+# Add this under the EXISTING "services:" key, alongside api-gw and supavisor.
+# Do NOT create a second "services:" key -- YAML silently drops the first.
+#
+# ---------------------------------------------------------------------------
+# Use a plain mapping. Do NOT add the !override tag.
+#
+# Compose MERGES mappings and REPLACES lists. `environment:` is a mapping in
+# the base compose file, so these entries are additive and the stack's own
+# injected vars survive. The !override tag on `ports:` exists precisely because
+# lists behave differently -- copying that habit here would wipe SUPABASE_URL
+# and SUPABASE_SERVICE_ROLE_KEY and break all 17 functions at once.
+# ---------------------------------------------------------------------------
+
+  functions:
+    environment:
+      LARAVEL_API_BASE_URL: ${LARAVEL_API_BASE_URL:-}
+      LARAVEL_CLIENT_ID: ${LARAVEL_CLIENT_ID:-}
+      LARAVEL_CLIENT_SECRET: ${LARAVEL_CLIENT_SECRET:-}
+      LARAVEL_WEBHOOK_SECRET: ${LARAVEL_WEBHOOK_SECRET:-}
+      LARAVEL_API_KEY: ${LARAVEL_API_KEY:-}
+      LOVABLE_API_KEY: ${LOVABLE_API_KEY:-}
+      TELECRM_WEBHOOK_URL: ${TELECRM_WEBHOOK_URL:-}
+      TELECRM_ACCESS_TOKEN: ${TELECRM_ACCESS_TOKEN:-}
+
+# ---------------------------------------------------------------------------
+# The `:-` defaults are deliberate: Compose warns and substitutes empty for an
+# undeclared variable, so this keeps the config valid while LOVABLE_API_KEY is
+# still outstanding. Add the value to .env later and restart -- no YAML change.
+#
+# WHICH ONES ARE ACTUALLY REQUIRED (verified 2026-08-22 at HEAD 32831837):
+#
+#   LARAVEL_API_BASE_URL   REQUIRED. Used by laravel-api AND laravel-catalog.
+#                          Code falls back to https://qa.lilbrahmas.org when
+#                          unset -- so production talks to QA silently rather
+#                          than failing. Confirm the production value.
+#   LARAVEL_CLIENT_ID      REQUIRED. OAuth client-credentials pair for
+#   LARAVEL_CLIENT_SECRET  laravel-api, which drives the live enrollment flow
+#                          (AdmissionJourney.tsx, SlotPicker.tsx).
+#
+#   LARAVEL_WEBHOOK_SECRET REQUIRED. Added 10 Sep 2026. Shared HMAC-SHA256 key for
+#                          laravel-admission-webhook, which verifies the raw body
+#                          against the X-LB-Signature header. Unlike every other
+#                          blank here this one fails LOUDLY: an unset value makes
+#                          the function answer 500 "Webhook secret not configured"
+#                          to every call, so it is a hard gate on the admissions
+#                          payment handover.
+#                          The API side calls the same value
+#                          PUBLIC_ENROLLMENT_WEBHOOK_SECRET (an older spec says
+#                          LIL_BRAHMAS_WEBHOOK_SECRET -- confirm which is deployed).
+#                          Laravel skips the webhook silently when its copy is
+#                          missing, so verify both ends.
+#                          Generate with: openssl rand -hex 32
+#
+#   LARAVEL_API_KEY        NOT NEEDED. Only laravel-catalog reads it, and
+#                          src/lib/catalogApi.ts -- its only caller -- is not
+#                          imported anywhere in src/. That function is the
+#                          superseded "Step 1" design from
+#                          docs/laravel-catalog-api.md. The header is also
+#                          conditional: ...(KEY ? {"X-Api-Key": KEY} : {}),
+#                          so an empty value is omitted rather than sent blank.
+#                          Listed here only so reviving it needs no YAML edit.
+#
+#   LOVABLE_API_KEY        Gates 5 AI functions: ai-translate, faq-assistant,
+#                          translate-templates, video-transcribe,
+#                          diagram-refresh. Deferred. Nothing else breaks.
+#
+#   TELECRM_WEBHOOK_URL    REQUIRED for CRM delivery. Added 31 Aug 2026. The
+#                          TeleCRM Async endpoint,
+#                          https://api.telecrm.in/enterprise/<id>/autoupdatelead.
+#                          crm-lead treats it as the on/off gate: unset means the
+#                          function answers 200 with
+#                          reason:"telecrm_not_configured" and the lead lives only
+#                          in our own database. Nothing visible breaks.
+#   TELECRM_ACCESS_TOKEN   REQUIRED in practice. Sent as Authorization: Bearer.
+#                          The header is conditional in code, so an empty value is
+#                          omitted rather than sent blank -- but TeleCRM rejects
+#                          the unauthenticated POST, so this is not optional.
+#
+# SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_DB_URL
+# and JWT_SECRET are injected by the base compose file -- do not add them here.
+#
+# After editing, verify the merge kept the injected vars:
+#   docker compose config | grep -A 20 '^  functions:' | grep -E 'SUPABASE_|LARAVEL_|LOVABLE_|TELECRM_'
+#
+# Then the port gate before any `up` (adding-instance step 32):
+#   test $(docker compose config | grep -c 'published:') -eq $(docker compose config | grep -c 'host_ip: 127.0.0.1') && echo "ALL PORTS LOOPBACK" || echo "MISMATCH - DO NOT START"
+#
+# NOTE: this edit changes docker-compose.override.yml's line count. The
+# adding-instance runbook step 11 asserts "33 lines / 11 resets" -- update that
+# expectation there, or the next instance build reads as a failure.

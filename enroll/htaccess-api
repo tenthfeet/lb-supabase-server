@@ -1,0 +1,15 @@
+# Upload to /home/enroll/public_html/api.enroll.lilbrahmas.org/.htaccess
+#   (owner: enroll, mode 644)
+#
+# Belt and braces alongside the exclusions in the parent .htaccess.
+#
+# Nearly every request to api.enroll.lilbrahmas.org is handled by ProxyPass to
+# Envoy on 127.0.0.1:8000 and never touches the filesystem at all. The one
+# exception is /.well-known/, which the vhost deliberately excludes from the
+# proxy ("ProxyPass /.well-known/ !") so AutoSSL can validate over plain HTTP.
+#
+# That excluded path DOES hit the filesystem, which means a rewrite inherited
+# from the parent directory could still capture it. Turning the engine off here
+# guarantees ACME challenge files are served as plain static files.
+
+RewriteEngine Off
