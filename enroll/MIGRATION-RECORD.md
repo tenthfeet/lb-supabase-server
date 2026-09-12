@@ -149,6 +149,16 @@ Host github.com
 
 Then `git clone git@github.com:lilbrahmas-hue/lil-brahmas-pathfinder-fa3abdd4.git /opt/apps/enroll`.
 
+> **The repo moved on 12 Sep 2026.** Lovable hit sync trouble with `fa3abdd4`
+> and re-created the same project as
+> `librahmas-hue/lil-brahmas-pathfinder-67845d9c`. The history came across
+> intact, so the checkout was repointed with `git remote set-url` rather than
+> re-cloned, and the deploy key was moved between repos — a key can only be
+> registered on one. The URL above is what was actually run in August and stays
+> as the record. Note the account also reads `librahmas-hue` now;
+> `lilbrahmas-hue` resolves only because GitHub redirects the former name.
+> Current procedure is in `OPERATIONS.md` §6.
+
 > The clone is **538 MB**, but not for the reason it first appears. Ten videos
 > (349 MB) were deleted from `public/videos/` in commit `ba9a1890` and are **not
 > present at HEAD** — they remain reachable in history, and git clones all of it.

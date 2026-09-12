@@ -5,6 +5,7 @@ applying schema updates, rolling back, and diagnosing failures.
 
 **Server:** `184.168.122.104` · **Live:** https://enroll.lilbrahmas.org
 **API:** https://api.enroll.lilbrahmas.org
+**Upstream:** `librahmas-hue/lil-brahmas-pathfinder-67845d9c`, branch `main`
 
 Background on how it was built: `MIGRATION-RECORD.md`.
 Outstanding items: `LAUNCH-CHECKLIST.md`.
@@ -594,6 +595,45 @@ not wired into the override, or the container was not recreated after the change
 
 **`docker compose` says a variable is not set** — it is referenced in the
 override but absent from `.env`. Either add it, or give it a `:-` default.
+
+**"git pull failed" after Lovable moved the project to a new repo** — Lovable
+re-creates the project against a fresh GitHub repo when its sync breaks. Nothing
+in `deploy.sh` names a repository; the only pointer is the checkout's own remote:
+
+```bash
+git -C /opt/apps/enroll remote -v
+```
+
+A deploy key can live on only one repository across all of GitHub, so delete the
+server key from the **old** repo's Settings → Deploy keys first, then add
+`/root/.ssh/enroll_deploy.pub` to the new one with write access OFF. Confirm the
+key reaches it before changing anything:
+
+```bash
+git -C /opt/apps/enroll ls-remote git@github.com:<owner>/<new-repo>.git
+```
+
+Then repoint, and prove a fast-forward is possible — `deploy.sh` pulls with
+`--ff-only` and will refuse anything else:
+
+```bash
+git -C /opt/apps/enroll remote set-url origin git@github.com:<owner>/<new-repo>.git
+```
+
+```bash
+git -C /opt/apps/enroll fetch origin && git -C /opt/apps/enroll merge-base --is-ancestor HEAD origin/main && echo FF-OK || echo NOT-FF
+```
+
+`FF-OK` means a normal `deploy-enroll` finishes the job. `NOT-FF` means the new
+repo does not share history, and the fix is a fresh clone with
+`.env.production.local` carried across — not a merge. That file is gitignored, so
+a repoint leaves it untouched either way.
+
+Check whether the incoming commits touch schema before choosing deploy flags:
+
+```bash
+git -C /opt/apps/enroll diff --name-only HEAD origin/main -- supabase/migrations supabase/functions
+```
 
 ---
 

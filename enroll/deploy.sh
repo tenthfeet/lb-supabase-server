@@ -900,13 +900,18 @@ say "Done — $(git -C "$REPO" rev-parse --short HEAD)"
 #     (repo -> Settings -> Deploy keys -> Add, leave "Allow write access" OFF):
 #       cat /root/.ssh/enroll_deploy.pub
 #
+#     A deploy key can live on only ONE repository across the whole of GitHub.
+#     If the Lovable project is ever moved to a new repo, delete the key from
+#     the old repo BEFORE adding it to the new one, or the add is rejected with
+#     "Key is already in use".
+#
 #  3. Tell ssh to use it for github.com — append to /root/.ssh/config:
 #       Host github.com
 #         IdentityFile /root/.ssh/enroll_deploy
 #         IdentitiesOnly yes
 #
 #  4. Clone:
-#       git clone git@github.com:lilbrahmas-hue/lil-brahmas-pathfinder-fa3abdd4.git /opt/apps/enroll
+#       git clone git@github.com:librahmas-hue/lil-brahmas-pathfinder-67845d9c.git /opt/apps/enroll
 #
 #  5. Create /opt/apps/enroll/.env.production.local (gitignored, so pulls
 #     never clobber it):

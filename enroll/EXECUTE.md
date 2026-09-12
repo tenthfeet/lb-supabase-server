@@ -10,6 +10,11 @@ paste.
 
 Run steps in order. Each has an expected result; if you don't get it, stop.
 
+> **Historical — read `OPERATIONS.md` for anything you are doing today.** This
+> is the August 2026 run as it was executed. The repo it clones was replaced on
+> 12 Sep 2026 by `librahmas-hue/lil-brahmas-pathfinder-67845d9c`; the old URL is
+> left below because that is what ran.
+
 ---
 
 ## Already done (2026-08-20)
