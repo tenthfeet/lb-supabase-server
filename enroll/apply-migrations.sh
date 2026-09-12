@@ -14,7 +14,7 @@ MIGRATIONS=/opt/apps/enroll/supabase/migrations
 
 if [ ! -d "$MIGRATIONS" ]; then
   echo "FAIL: $MIGRATIONS not found. Clone the repo first:"
-  echo "  git clone https://github.com/librahmas-hue/lil-brahmas-pathfinder-67845d9c.git /opt/apps/enroll"
+  echo "  git clone git@github-enroll:librahmas-hue/lil-brahmas-pathfinder-67845d9c.git /opt/apps/enroll"
   exit 1
 fi
 

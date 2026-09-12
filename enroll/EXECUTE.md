@@ -13,7 +13,8 @@ Run steps in order. Each has an expected result; if you don't get it, stop.
 > **Historical — read `OPERATIONS.md` for anything you are doing today.** This
 > is the August 2026 run as it was executed. The repo it clones was replaced on
 > 12 Sep 2026 by `librahmas-hue/lil-brahmas-pathfinder-67845d9c`; the old URL is
-> left below because that is what ran.
+> left below because that is what ran. The ssh setup in Step 1 was also replaced
+> that day by per-app aliases — see `OPERATIONS.md` §0.
 
 ---
 
@@ -60,6 +61,12 @@ Point ssh at it:
 ```bash
 ssh root@184.168.122.104 "printf 'Host github.com\n  IdentityFile /root/.ssh/enroll_deploy\n  IdentitiesOnly yes\n' >> /root/.ssh/config && chmod 600 /root/.ssh/config"
 ```
+
+> **Do not run that command today.** It appends a bare `Host github.com` block,
+> which was removed on 12 Sep 2026 when `growth` was added. Its absence is what
+> makes a checkout still pointing at `github.com` fail loudly instead of quietly
+> using another app's key. The current form is one alias per app —
+> `OPERATIONS.md` §0.
 
 ```bash
 ssh root@184.168.122.104 "ssh -o StrictHostKeyChecking=accept-new -T git@github.com"

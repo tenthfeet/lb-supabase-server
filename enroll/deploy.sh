@@ -905,13 +905,24 @@ say "Done — $(git -C "$REPO" rev-parse --short HEAD)"
 #     the old repo BEFORE adding it to the new one, or the add is rejected with
 #     "Key is already in use".
 #
-#  3. Tell ssh to use it for github.com — append to /root/.ssh/config:
-#       Host github.com
+#  3. Give the app its OWN ssh alias — append to /root/.ssh/config (mode 600):
+#       Host github-enroll
+#         HostName github.com
+#         User git
 #         IdentityFile /root/.ssh/enroll_deploy
 #         IdentitiesOnly yes
 #
-#  4. Clone:
-#       git clone git@github.com:librahmas-hue/lil-brahmas-pathfinder-67845d9c.git /opt/apps/enroll
+#     There is deliberately no plain "Host github.com" block on this server.
+#     A deploy key is registered against one repository, so apps cannot share
+#     one; and two IdentityFile lines under a single github.com block make ssh
+#     offer whichever matches first. GitHub then authenticates the connection
+#     and refuses the repository, reporting "Repository not found" -- which
+#     reads like a typo in the URL and is not one. One alias per app keeps each
+#     key with its own repo, and anything still naming github.com fails at once
+#     instead of silently borrowing another app's key.
+#
+#  4. Clone THROUGH THE ALIAS, not github.com:
+#       git clone git@github-enroll:librahmas-hue/lil-brahmas-pathfinder-67845d9c.git /opt/apps/enroll
 #
 #  5. Create /opt/apps/enroll/.env.production.local (gitignored, so pulls
 #     never clobber it):

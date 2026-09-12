@@ -61,6 +61,7 @@ more control than the project needs today.
 | `/home/enroll/public_html/` | Served frontend (owned by cPanel user `enroll`) |
 | `…/public_html/api.enroll.lilbrahmas.org/` | API vhost docroot — **inside** the frontend docroot |
 | `/root/.ssh/enroll_deploy` | Read-only GitHub deploy key |
+| `/root/.ssh/config` | Per-app ssh aliases (`github-enroll`, `github-growth`). Mode 600. |
 
 Backups taken during this work: `/root/htaccess-enroll.backup`,
 `/root/override.yml.backup`.
@@ -148,6 +149,14 @@ Host github.com
 ```
 
 Then `git clone git@github.com:lilbrahmas-hue/lil-brahmas-pathfinder-fa3abdd4.git /opt/apps/enroll`.
+
+> **Superseded 12 Sep 2026.** Adding the `growth` app replaced this block with
+> one alias per app — enroll now reaches GitHub as `github-enroll`, and the
+> checkout's remote was repointed to match. A deploy key is registered against
+> one repository, so a second app cannot reuse this key, and a second
+> `IdentityFile` under one `github.com` block makes ssh offer the wrong one.
+> The block above is what was configured in August and stays as the record;
+> current procedure is in `OPERATIONS.md` §0.
 
 > **The repo moved on 12 Sep 2026.** Lovable hit sync trouble with `fa3abdd4`
 > and re-created the same project as

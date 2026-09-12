@@ -28,6 +28,46 @@ pastes; this is not a formatting preference.
 
 Windows-side commands assume **Git Bash**, not cmder/CMD.
 
+### How the server reaches GitHub
+
+Every app on this box has its own read-only deploy key **and its own ssh alias**.
+Enroll's, in `/root/.ssh/config` (mode 600):
+
+```
+Host github-enroll
+  HostName github.com
+  User git
+  IdentityFile /root/.ssh/enroll_deploy
+  IdentitiesOnly yes
+```
+
+So the checkout's remote reads `git@github-enroll:…`, never `git@github.com:…`.
+
+**There is deliberately no plain `Host github.com` block.** A GitHub deploy key
+is registered against a single repository, so two apps cannot share one — and
+two `IdentityFile` lines under one `github.com` block make ssh offer whichever
+matches first. GitHub authenticates the connection, then refuses the repository
+with `Repository not found`, which reads like a typo in the URL and is not one.
+Keeping the bare block out means anything still naming `github.com` fails
+immediately rather than silently borrowing another app's key.
+
+To check a key, ask GitHub which repo it is bound to:
+
+```bash
+ssh -T git@github-enroll
+```
+
+Expect `Hi librahmas-hue/lil-brahmas-pathfinder-67845d9c! You've successfully
+authenticated, but GitHub does not provide shell access.` The second half is not
+an error — GitHub gives nobody shell access. **This command exits `1` even on
+success**, so read the message, not the status. A person's username in place of
+`owner/repo` means the key was added to their account rather than as a deploy
+key, and the server now has everything they can reach.
+
+Adding an app means a new keypair, a new alias block, and a clone through the
+alias. `deploy.sh` needs no change — it runs `git pull` against whatever address
+the clone was made with.
+
 ---
 
 ## 1. Deploying a change
@@ -560,6 +600,25 @@ atomic)` so the difference is visible in the log.
 
 ## 6. Troubleshooting
 
+**`git pull failed`, or `Permission denied (publickey)`** — the checkout is
+naming `github.com` rather than its alias. There is no `Host github.com` block on
+this server, so ssh has no key to offer and GitHub rejects the connection. Check
+what the remote says:
+
+```bash
+git -C /opt/apps/enroll remote -v
+```
+
+It must begin `git@github-enroll:`. If it begins `git@github.com:`, repoint it —
+this swaps only the host part and leaves the repo path alone:
+
+```bash
+git -C /opt/apps/enroll remote set-url origin "$(git -C /opt/apps/enroll remote get-url origin | sed 's|git@github\.com:|git@github-enroll:|')"
+```
+
+If the remote was already correct, the key is the problem rather than the
+address. Use the `ssh -T git@github-enroll` check in §0.
+
 **Deploy refuses: "has uncommitted changes"** — someone edited the checkout.
 `git -C /opt/apps/enroll status` to see what, then
 `git -C /opt/apps/enroll checkout -- .` to discard. Edits belong in Lovable.
@@ -610,14 +669,14 @@ server key from the **old** repo's Settings → Deploy keys first, then add
 key reaches it before changing anything:
 
 ```bash
-git -C /opt/apps/enroll ls-remote git@github.com:<owner>/<new-repo>.git
+git -C /opt/apps/enroll ls-remote git@github-enroll:<owner>/<new-repo>.git
 ```
 
 Then repoint, and prove a fast-forward is possible — `deploy.sh` pulls with
 `--ff-only` and will refuse anything else:
 
 ```bash
-git -C /opt/apps/enroll remote set-url origin git@github.com:<owner>/<new-repo>.git
+git -C /opt/apps/enroll remote set-url origin git@github-enroll:<owner>/<new-repo>.git
 ```
 
 ```bash

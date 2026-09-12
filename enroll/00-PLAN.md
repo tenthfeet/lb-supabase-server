@@ -278,8 +278,9 @@ git clone https://github.com/lilbrahmas-hue/lil-brahmas-pathfinder-fa3abdd4.git 
 ```
 
 Upstream moved on 12 Sep 2026 — a clone today uses
-`librahmas-hue/lil-brahmas-pathfinder-67845d9c`. The URL above is the one this
-plan was executed with.
+`librahmas-hue/lil-brahmas-pathfinder-67845d9c`, over ssh through the
+`github-enroll` alias rather than https. The URL above is the one this plan was
+executed with.
 
 Then sync the functions into the stack, **excluding `main/`** — the stack ships
 its own router at `volumes/functions/main/index.ts` and overwriting it breaks
