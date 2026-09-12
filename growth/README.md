@@ -1,6 +1,6 @@
 # growth.lilbrahmas.org — deploy kit
 
-**Status: git is done. Nothing else is provisioned.**
+**Status: git, DNS, cPanel and SSL are done. The Supabase stack is not created.**
 
 This folder is the deploy kit for the second app on the VPS. It is deliberately
 thin right now — most of enroll's documents are records of a migration that has
@@ -9,6 +9,7 @@ already happened, and growth's has not. What exists here is what is true.
 | File | What |
 |---|---|
 | `GIT-SETUP.md` | The completed git work: deploy key, ssh alias, clone. Also the template for instance 3. |
+| `STACK-PROVISIONING.md` | The Supabase stack work: what is done, the baseline to verify against, and where the runbook diverges for growth. |
 | `README.md` | This file. Where things stand and what the next decision is. |
 
 Everything else — `OPERATIONS.md`, `deploy-growth`, the migration record — gets
@@ -24,8 +25,10 @@ written when the work it describes actually happens.
 | ✅ **SSH alias** | `github-growth` in `/root/.ssh/config`; enroll moved to `github-enroll` |
 | ✅ **Clone** | `/opt/apps/growth`, 13 MB, `--filter=blob:none` |
 | ✅ **Enroll verified healthy** | after the ssh config change, via `ls-remote` |
-| ❌ **Supabase stack** | not created — `/opt/supabase/stacks/` holds only `enroll` |
-| ❌ **DNS / cPanel subdomain** | not created |
+| ✅ **cPanel** | one account `growthlilbrahmas` owns both hostnames, enroll's shape. `api.growth.lilbrahmas.com` was created by mistake and has been terminated |
+| ✅ **DNS** | both names resolve to `184.168.122.104`, authoritatively and publicly |
+| ✅ **SSL** | one Let's Encrypt SAN cert covers both hostnames, valid to 11 Dec 2026 |
+| ❌ **Supabase stack** | not created — `/opt/supabase/stacks/` holds only `enroll`. Next step: `STACK-PROVISIONING.md` §4 |
 | ❌ **`.env.production.local`** | blocked: needs the publishable key from a stack that does not exist |
 | ❌ **Serving** | design not started. See *The finding that changed the plan*. |
 
@@ -93,10 +96,14 @@ AI training. `src/integrations/lovable/index.ts` also wires OAuth sign-in throug
 `@lovable.dev/cloud-auth-js`. Enroll moved off Lovable Cloud completely; growth
 cannot without replacing these. No hosting choice changes it.
 
-**Postgres calls the app back over HTTP.** One migration references `pg_cron`,
-and the two hook routes expect to be called by it. The stack will need `pg_cron`
-and `pg_net` enabled and able to reach the app's URL — a requirement enroll's
-stack does not have.
+**~~Postgres calls the app back over HTTP.~~ — this was wrong.** Checked against
+all 226 migrations on 12 Sep 2026: there are **zero** `CREATE EXTENSION`
+statements and **zero** `pg_net` / `net.http_post` references. The only
+`cron.schedule` calls run plain SQL, and the whole block is guarded by
+`IF EXISTS (… extname = 'pg_cron')`, so with the extension absent it schedules
+nothing and still succeeds. No `pg_net`, no callback URL. The two hook routes are
+orphans that nothing calls, and they are gated only by the publishable key —
+which ships in the browser bundle. See `STACK-PROVISIONING.md` §§3.4–3.5.
 
 The server needs four variables: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
 `SUPABASE_PUBLISHABLE_KEY`, `LOVABLE_API_KEY`.
@@ -153,21 +160,27 @@ served directly by Apache.
 1. **App server port scheme.** Proposed: `3000 + 10(N-1)`, so growth is **3010**.
    This extends a documented convention and needs sign-off. The runbook's own
    rule applies — re-derive and check rather than trusting the formula.
-2. **Nitro preset.** Currently Cloudflare by default. Needs to become
-   `node-server` or `bun`. This determines the container image and must be
-   settled before any container exists.
+2. **Nitro preset.** Currently Cloudflare by default, and it is not set anywhere
+   in the repo — it comes from `@lovable.dev/vite-tanstack-config@2.13.1`.
+   Target **`bun`**, not `node-server`: Lovable's toolchain is bun and this
+   server has no Node. Whether an env var can override the wrapper, or only
+   editing `vite.config.ts` can, is the open part — and it decides whether this
+   is maintainable, since Lovable owns that file. **Answerable off the server.**
 3. **Where the four environment variables live**, and how the service-role key is
-   handled — stack `.env` is mode 600 for this reason.
-4. **`pg_cron` / `pg_net`** in the growth stack, and the URL the hooks are called
-   at.
+   handled — stack `.env` is mode 600 for this reason. Note these are read from
+   `process.env` at runtime, not baked at build time like enroll's `VITE_*`.
+4. ~~`pg_cron` / `pg_net`~~ — **resolved, not required.** See above.
 
 ---
 
 ## Next step
 
-Nothing has been run since the clone. The immediate next action is to **capture a
-baseline** of coturn, enroll and the host's network state, so that everything
-afterwards can be proved not to have disturbed them:
+**The baseline below was captured on 12 Sep 2026** — recorded values are in
+`STACK-PROVISIONING.md` §2, which also explains why the raw coturn capture is
+unusable for comparison and which file to use instead. The next action is now
+`STACK-PROVISIONING.md` §4, copying the stack.
+
+These remain the commands to re-run at the end, to prove nothing was disturbed:
 
 ```bash
 ss -tulnp | grep turnserver | awk '{print $1, $5}' | sort -u > /root/growth-baseline-coturn.txt; wc -l < /root/growth-baseline-coturn.txt
