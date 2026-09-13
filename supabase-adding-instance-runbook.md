@@ -146,22 +146,70 @@ collide either.
 one instance validates against the other; shared `POSTGRES_PASSWORD` means one
 credential opens both databases.
 
+> ⚠ **No `docker compose` command of any kind in this folder until step 19.**
+> The copied `.env` still carries enroll's `COMPOSE_PROJECT_NAME`, and Compose
+> takes the project name from that file. Until step 19 changes it, every Compose
+> command run here addresses **enroll's live project**: `up` would recreate
+> enroll's containers against this folder's empty data mount, `down` would stop
+> enroll, and `ps` or `logs` would show enroll's containers as this instance's.
+> Step 13's `docker run` is not a Compose command and is unaffected.
+
+**11a.** Record what is still shared with enroll. Prints the **names** — never
+the values — of every non-empty variable whose value is identical in both files.
+
+```
+awk -F= 'NR==FNR{if($1~/^[A-Z_][A-Z0-9_]*$/)e[$1]=substr($0,index($0,"=")+1);next}$1~/^[A-Z_][A-Z0-9_]*$/&&e[$1]!=""&&e[$1]==substr($0,index($0,"=")+1){s=s" "$1;n++}END{print(n+0" identical:"s)}' /opt/supabase/stacks/enroll/.env .env
+```
+
+Straight after the copy **every non-empty variable** is listed, including all 20
+that steps 12–13 regenerate. That is why it runs now: it proves the comparison
+detects sharing before step 13a relies on it to show the sharing is gone.
+
+> ⚠ **Both key scripts print every secret they generate to the terminal** —
+> `JWT_SECRET`, `POSTGRES_PASSWORD`, `SUPABASE_SECRET_KEY`, and in step 13
+> `JWT_KEYS`, which contains the ES256 **private** key. Run them only with
+> `> /dev/null`, and never paste their output anywhere. Discarding the output
+> also hides the scripts' own messages; step 13a is how you know they worked.
+
 **12.** Symmetric secrets, Postgres and dashboard passwords.
 
 ```
-sh utils/generate-keys.sh --update-env
+sh utils/generate-keys.sh --update-env > /dev/null
 ```
+
+Straight after this step `.env.old` holds **enroll's** secrets: `sed -i.old`
+keeps the pre-edit file beside the new one. Step 13 rewrites it again, and it
+still holds superseded secrets until step 14 deletes it.
 
 **13.** EC P-256 pair and opaque API keys. Must run **after** step 12 — it reads
 the `JWT_SECRET` that step produces. No node on this server, so it pulls
 `node:22-alpine`.
 
 ```
-sh utils/add-new-auth-keys.sh --update-env
+sh utils/add-new-auth-keys.sh --update-env > /dev/null
 ```
 
-**14.** Delete the leftover. Mode 644, not gitignored, holds superseded secrets
-(addendum §4.5).
+**13a.** Run step 11a's comparison again. **None of these 20 may be listed:**
+
+- from step 12: `JWT_SECRET`, `ANON_KEY`, `SERVICE_ROLE_KEY`, `SECRET_KEY_BASE`,
+  `REALTIME_DB_ENC_KEY`, `VAULT_ENC_KEY`, `PG_META_CRYPTO_KEY`,
+  `LOGFLARE_PUBLIC_ACCESS_TOKEN`, `LOGFLARE_PRIVATE_ACCESS_TOKEN`,
+  `S3_PROTOCOL_ACCESS_KEY_ID`, `S3_PROTOCOL_ACCESS_KEY_SECRET`,
+  `MINIO_ROOT_PASSWORD`, `POSTGRES_PASSWORD`, `DASHBOARD_PASSWORD`
+- from step 13: `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`,
+  `ANON_KEY_ASYMMETRIC`, `SERVICE_ROLE_KEY_ASYMMETRIC`, `JWT_KEYS`, `JWT_JWKS`
+
+`COMPOSE_FILE` and `COMPOSE_PROJECT_NAME` must still be listed — the scripts
+left them alone (step 26 checks their values). Everything else still listed is
+what no script touches: the ports, URLs and `POOLER_TENANT_ID` that §6 rewrites,
+and anything enroll added for its own edge functions, which §6 does not cover.
+
+A name dropping off the list proves its value changed, not that the new value is
+valid — an empty value differs too. Steps 17–18 check the shape of three of them.
+
+**14.** Delete the leftover. It holds superseded secrets and is not gitignored
+(addendum §4.5). Its mode is whatever `.env` had when the scripts ran — 644 for a
+`.env` made from `.env.example`, 600 for one copied from enroll.
 
 ```
 rm -f .env.old
@@ -182,6 +230,11 @@ ls -la .env
 ```
 grep -cE 'your-super-secret|this_password_is_insecure|your-32-character|supabaserealtime|your-encryption-key' .env
 ```
+
+**On a copied stack this step cannot fail.** It looks for upstream's placeholder
+strings, and enroll's `.env` — the one step 7 copied — contains none, so it
+prints `0` even if steps 12–13 never ran. It only guards a `.env` built from
+`.env.example`. Steps 11a and 13a are the check that can fail.
 
 **17.** Exact lengths — Realtime requires exactly 16, Vault exactly 32. This
 catches a dropped newline merging two variables, which a visual scan does not.
@@ -205,7 +258,8 @@ grep '^JWT_KEYS=' .env | cut -d= -f2- | python3 -m json.tool > /dev/null
 > disturbed. Step 26 re-checks both — do not skip it.
 
 **19.** Project name. Beats the `name: supabase` field at line 11 of
-`docker-compose.yml`.
+`docker-compose.yml`. Until this runs, Compose in this folder addresses enroll's
+project — see the warning at the top of §5.
 
 ```
 sed -i "s|^COMPOSE_PROJECT_NAME=.*|COMPOSE_PROJECT_NAME=$INST|" .env
@@ -327,11 +381,18 @@ docker compose up -d
 sleep 90
 ```
 
-**35.** Health. **Expect 0.**
+**35.** Health. **Expect `containers: 11 healthy: 11`** and no `NOT HEALTHY`
+lines. A container still in `(health: starting)` counts as not healthy — wait,
+then re-run.
 
 ```
-docker compose ps --format '{{.Service}} {{.Status}}' | grep -vc healthy
+docker compose ps -a --format '{{.Service}}:{{.Status}}' | awk '{t++}/\(healthy\)/{ok++;next}{print("NOT HEALTHY "$0)}END{print("containers: "t+0" healthy: "ok+0)}'
 ```
+
+The earlier form of this check, `grep -vc healthy`, could pass on a broken
+stack: `(unhealthy)` contains the substring `healthy`, `ps` without `-a` omits
+containers that have exited, and an empty listing — wrong folder, Compose error
+— printed `0` as well.
 
 **36.** Confirm Postgres actually re-initialised. Expect `anon`,
 `authenticated`, `service_role` and nine `supabase_*` roles.
@@ -460,10 +521,12 @@ docker compose exec -T db psql -U postgres -c "SELECT c.relname, c.relrowsecurit
 
 ### The existing instance and the host
 
-**50.** Instance 1 still healthy. Expect 0.
+**50.** Instance 1 still healthy. **Expect `containers: 11 healthy: 11`** and no
+`NOT HEALTHY` lines — step 35's check, run in a subshell so the terminal stays in
+this instance's folder.
 
 ```
-cd /opt/supabase/stacks/enroll && docker compose ps --format '{{.Service}} {{.Status}}' | grep -vc healthy
+(cd /opt/supabase/stacks/enroll && docker compose ps -a --format '{{.Service}}:{{.Status}}') | awk '{t++}/\(healthy\)/{ok++;next}{print("NOT HEALTHY "$0)}END{print("containers: "t+0" healthy: "ok+0)}'
 ```
 
 **51.** Instance 1's API still answering.
