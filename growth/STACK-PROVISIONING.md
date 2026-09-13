@@ -23,7 +23,7 @@ happens; what is written here has been run and verified unless marked otherwise.
 | ✅ GoDaddy DNS | both names resolve to `184.168.122.104` authoritatively **and** publicly |
 | ✅ ACME path proven | probe files fetched over plain HTTP from both hostnames |
 | ✅ SSL issued | Let's Encrypt, `ssl_verify=0` on both, valid to **11 Dec 2026** |
-| ❌ Stack | not created — `/opt/supabase/stacks/` holds only `enroll` |
+| ✅ Stack | running at `/opt/supabase/stacks/growth` since ~07:05 UTC 13 Sep 2026 — 11/11 healthy, ports on loopback only, keys and tokens proven isolated from enroll, enroll and coturn verified undisturbed. See §4. Empty database, no migrations applied |
 | ❌ Apache reverse proxy | not written |
 | ❌ Serving design for the app | still open — see `README.md` |
 
@@ -54,6 +54,13 @@ shared certificate is another name that must pass validation at renewal.
 ---
 
 ## 2. Baseline — compare against these at the end
+
+> **Re-capture immediately before `docker compose up`.** These values were taken
+> on 12 Sep 2026. cPanel's `upcp` has run since — 00:46 UTC on 13 Sep — and it
+> has restarted coturn before. Compared against this table, a changed PID at the
+> end could be cPanel's doing rather than the stack start, and the two cannot be
+> told apart afterwards. The comparison that proves anything is against a
+> snapshot taken minutes before the start.
 
 | Item | Value |
 |---|---|
@@ -101,13 +108,23 @@ The runbook assumes the new instance resembles enroll. Growth does not.
 ### 3.1 The override is 42 lines, not 33
 
 Runbook §4 step 11 expects `lines: 33  resets: 11`. Enroll's actual override is
-**42 lines, 11 resets**, with backups `docker-compose.override.yml.bak-2026-08-31`
-and `bak-2026-09-10` beside it. The template has been edited twice since the
-runbook was written; the 9 extra lines are most likely the secret wiring in
-OPERATIONS.md §2 (`LARAVEL_*`, `LOVABLE_API_KEY`, `TELECRM_*`).
+**42 lines, 11 resets**. Confirmed 13 Sep 2026 with `cat -n`:
 
-**Expect 42/11 after the copy.** Not yet confirmed what the extra lines contain —
-check before deciding whether to trim enroll's secret wiring out of growth's copy.
+| Lines | Content |
+|---|---|
+| 1–26 | template, unchanged |
+| **27–35** | `environment:` + 8 × `${VAR:-}` under `functions:` — `LARAVEL_API_BASE_URL`, `LARAVEL_CLIENT_ID`, `LARAVEL_CLIENT_SECRET`, `LARAVEL_WEBHOOK_SECRET`, `LARAVEL_API_KEY`, `LOVABLE_API_KEY`, `TELECRM_WEBHOOK_URL`, `TELECRM_ACCESS_TOKEN` |
+| 36–42 | template, unchanged |
+
+Backups: `bak-2026-08-31` is 39 lines, `bak-2026-09-10` is 41. The diff from
+31 Aug adds only `LARAVEL_WEBHOOK_SECRET` and the two `TELECRM_*` lines.
+
+**Decision: delete lines 27–35 from growth's copy.** They feed only enroll's edge
+functions; growth's functions container runs `main` alone, so nothing would read
+them, and they invite putting Laravel/TeleCRM secrets into growth's `.env`.
+Growth's `LOVABLE_API_KEY` belongs to the app process, not the stack.
+Removing exactly those 9 lines restores the runbook's **33 lines / 11 resets**,
+so step 11's original expectation holds for growth.
 
 ### 3.2 Growth has zero edge functions
 
@@ -134,13 +151,17 @@ Growth puts this logic in `createServerFn` inside the app instead, so **strip
 router and is required — OPERATIONS.md lists a missing `main/` as a deploy guard.
 `_shared` exists only for enroll's functions and goes with them.
 
+Confirmed from the app side, 13 Sep 2026: growth's `src/` contains no
+`functions.invoke`, no `/functions/v1` URL and no `.schema(` call. Nothing in the
+app calls an edge function or a non-`public` PostgREST schema.
+
 ### 3.3 Enroll state that must not ride along
 
 | Path | Why it must not be copied |
 |---|---|
 | `.applied-migrations` | enroll's migration ledger mirror. A stack built from `apply-migrations.sh` imports this file **once, automatically**, on the first `--with-migrations` — which would record *enroll's* filenames as applied against growth's 226 different migrations |
 | `.migrations.lock` | enroll's lock state |
-| `volumes/storage/**` | enroll's uploaded objects. Contents not yet sized — **check before copying** |
+| ~~`volumes/storage/**`~~ | **Not needed.** Sized 13 Sep 2026: 0 bytes, only an empty `stub` tenant folder. No enroll objects; copied as-is |
 | `docker-compose.override.yml.bak-*` | stale backups of enroll's override |
 | `.env.old` | superseded secrets, mode 644, not gitignored (addendum §4.5) |
 
@@ -184,33 +205,119 @@ auth middleware.
 drive them from a host cron over loopback. No extension needed, no database→app
 HTTP path, and failures land in a cron log rather than nowhere.
 
+### 3.6 Runbook §5 on a *copied* `.env`
+
+Read from the upstream scripts at pin `4760c1af77` on 13 Sep 2026 — not yet run.
+
+- **Both key scripts print every secret they generate to the terminal,
+  unconditionally** — `JWT_SECRET`, `POSTGRES_PASSWORD`, `SUPABASE_SECRET_KEY`,
+  and `JWT_KEYS`, which contains the ES256 **private** key. Run both with
+  `> /dev/null`. Their output must never be pasted anywhere.
+- **`--update-env` skips the `(y/N)` prompt.** Both write with `sed -i.old`, so
+  each leaves `.env.old` holding the previous values — straight after
+  `generate-keys.sh` that is **enroll's** secrets. Step 14's delete matters.
+- **Step 16 cannot fail on a copy.** It greps for upstream placeholder strings.
+  Enroll's `.env` has none, so it prints `0` even while growth's copy still holds
+  every one of enroll's secrets. The instrument that *can* fail is a comparison
+  of values against enroll's file, printing names only — run once before the
+  scripts to prove it detects sameness, and again after.
+- **Neither script touches** `SMTP_*`, `OPENAI_API_KEY`, `DASHBOARD_USERNAME`,
+  `POOLER_TENANT_ID`, or anything enroll added for its own functions. Whatever
+  enroll set there survives §5 and is a §6 decision.
+
+The comparison, names only, never values:
+
+```
+awk -F= 'NR==FNR{if($1~/^[A-Z_][A-Z0-9_]*$/)e[$1]=substr($0,index($0,"=")+1);next}$1~/^[A-Z_][A-Z0-9_]*$/&&e[$1]!=""&&e[$1]==substr($0,index($0,"=")+1){s=s" "$1;n++}END{print n+0" identical:"s}' /opt/supabase/stacks/enroll/.env /opt/supabase/stacks/growth/.env
+```
+
+**Baseline, 13 Sep 2026, before either script:** `77 identical`, including all
+20 variables the two scripts regenerate — so it does detect sharing. Of the 57
+no script touches, six are enroll's own function credentials with no consumer in
+growth after the §3.1 trim:
+
+`LARAVEL_API_BASE_URL` `LARAVEL_CLIENT_ID` `LARAVEL_CLIENT_SECRET`
+`LARAVEL_WEBHOOK_SECRET` `TELECRM_WEBHOOK_URL` `TELECRM_ACCESS_TOKEN`
+
+→ **delete those six lines from growth's `.env` in §6.** `LARAVEL_API_KEY` and
+`LOVABLE_API_KEY` are empty or absent in enroll's file. `SMTP_*` and
+`OPENAI_API_KEY` are non-empty — §6 must establish whether they are upstream
+placeholders or real credentials, without printing them.
+
+Expected count after `generate-keys.sh`: **63**. After `add-new-auth-keys.sh`:
+**57** — exactly the untouched set, with `COMPOSE_FILE` and
+`COMPOSE_PROJECT_NAME` still in it.
+
+### 3.7 Signups must stay disabled — a trigger makes every new user a trainee
+
+Growth has no signup UI. Users are created by admins through
+`auth.admin.createUser` with `email_confirm: true` (`admin-users.functions.ts`,
+`bulk-users.functions.ts`) and sign in with `signInWithPassword`. The Lovable
+OAuth wrapper `src/integrations/lovable/index.ts` is generated but imported
+nowhere, so no OAuth provider needs configuring.
+
+Migration `20260705120628_*` attaches `on_auth_user_created_dev_roles` to
+`auth.users`: **every** new user gets a `profiles` row and the `trainee` role
+(`counsellor@lilbrahmas.com` also gets `member` and the Sales department). With
+signups open, anyone holding the publishable key — which ships in the browser
+bundle — could `POST /auth/v1/signup` and become a trainee in the HR system.
+
+**§6: confirm `DISABLE_SIGNUP=true`.** Enroll set it on its own stack
+(`enroll/EXECUTE.md`), so the copy probably carries it — verify, do not assume.
+Expected but not yet tested: the admin API does not consult `DISABLE_SIGNUP`, so
+admin-created users keep working. Test both directions after start.
+
 ---
 
-## 4. Next step — copy the stack
-
-Nothing below has been run.
+## 4. Copy the stack — ✅ done 13 Sep 2026
 
 **Copy `stacks/enroll/`, not `upstream/docker/`.** Enroll carries the local-JWKS
 commit that uncomments `GOTRUE_JWT_KEYS`, `API_JWT_JWKS`, `JWT_JWKS` and
 `SUPABASE_JWKS`. Without them ES256 tokens fail verification and logins break.
 `upstream/` exists only to diff against at upgrade time.
 
-Source is 110 MB. Two checks to run first:
+### Checked before copying
+
+| Check | Result |
+|---|---|
+| `du -sh` + `ls -A` of `volumes/storage` | 0 bytes, only an empty `stub` tenant folder |
+| `wc -l` of override + backups, `diff bak-2026-08-31 live` | lines 27–35 are enroll's functions secret wiring — §3.1 |
+| `ls -la` of stack root, `volumes/`, `volumes/functions/main/` | no state files beyond §3.3's list; `.env.old` absent; `.env` mode 600; `main/index.ts` present |
+| `du -sh volumes/*` | `db` 109M (i.e. `db/data`), everything else under 1 MB |
+
+### The copy
+
+The exclusions live in a rules file, written once and checked (`cat -A`, and
+`wc -l` must be 7). Seven inline `--exclude` options would let one dropped space
+silently merge two patterns into a nonsense one:
 
 ```
-du -sh /opt/supabase/stacks/enroll/volumes/storage; ls -A /opt/supabase/stacks/enroll/volumes/storage | head
+printf '%s\n' '+ /volumes/functions/main/' '- /volumes/functions/*' '- /volumes/db/data' '- /.env.old' '- /.applied-migrations' '- /.migrations.lock' '- /docker-compose.override.yml.bak-*' > /root/growth-stack-copy.filter
 ```
 
+First match wins, so `main/` is let through before the functions wildcard. A
+leading `/` anchors a rule to the stack root; `*` does not cross `/`.
+
+Dry run (`-an --stats --out-format='%n'`) was read line by line, then the real
+copy. Both summaries identical: **81 created (62 files, 19 dirs), 578,646 bytes,
+0 deleted.**
+
 ```
-diff /opt/supabase/stacks/enroll/docker-compose.override.yml /opt/supabase/stacks/enroll/docker-compose.override.yml.bak-2026-08-31
+rsync -a --stats --filter='merge /root/growth-stack-copy.filter' /opt/supabase/stacks/enroll/ /opt/supabase/stacks/growth/
 ```
 
-The first sizes enroll's uploaded objects; the second reveals what the 9 extra
-override lines are, and therefore whether growth's copy should keep them.
+### Runbook steps 8–11, adapted
 
-Then the copy, with the §3.2 and §3.3 exclusions folded in so growth's stack never
-holds enroll's functions or ledger even briefly — followed by runbook §4 steps
-8–11 (create the empty data mount, confirm it is empty, confirm the override).
+| Step | What | Result |
+|---|---|---|
+| 8–9 | `mkdir` (no `-p`) the data mount `&&` count its contents | `0` |
+| — | `cmp` enroll's override against growth's `&&` `sed --in-place '27,35d'` | ran |
+| 11 | lines · `!reset null` count · `LARAVEL\|LOVABLE\|TELECRM` count | `33` · `11` · `0` |
+
+`cmp` is what makes the line-number delete safe: the numbers were read from
+enroll's file, so the delete only runs if growth's copy is still byte-identical to
+it. `--in-place` is spelled out because a dropped space next to short `-i` turns
+the script into a backup suffix instead of failing.
 
 ### The secret window — do not start anything yet
 
@@ -221,8 +328,272 @@ The copy brings enroll's `.env`, including its `JWT_SECRET` and
 > credentials with enroll, and a shared `JWT_SECRET` means a token minted by one
 > instance validates against the other.
 
-Order is: copy → regenerate secrets (§5) → rewrite `.env` (§6) → gates (§7) →
+Order is: copy ✅ → regenerate secrets (§5) → rewrite `.env` (§6) → gates (§7) →
 **then** start.
+
+**It is not only secrets.** Until runbook step 19, growth's `.env` carries
+enroll's `COMPOSE_PROJECT_NAME` (confirmed identical, 13 Sep 2026). Compose takes
+the project name from that file, so any `docker compose` command run in growth's
+folder addresses **enroll's live project** — an `up` would recreate enroll's
+containers against growth's empty data mount. Plain `docker run`, as step 13's
+node container uses, is unaffected.
+
+### Runbook §5 progress
+
+| Step | What | Result |
+|---|---|---|
+| baseline | value comparison against enroll (§3.6) | `77 identical` — all 20 regenerated variables present |
+| 12 | `(cd … && sh utils/generate-keys.sh --update-env > /dev/null)` | `63 identical` — exactly the 14 expected names gone; `COMPOSE_FILE` and `COMPOSE_PROJECT_NAME` intact |
+| 13 | `(cd … && sh utils/add-new-auth-keys.sh --update-env > /dev/null)` | `57 identical` — exactly the 6 expected names gone; the remaining 57 are the untouched set |
+
+**`57` proves the values changed, not that they are valid.** The comparison skips
+values that differ — and an *empty* value differs from enroll's too. If `openssl`
+or the node container had failed silently, the count would look identical. So a
+shape check follows: each of the 20 exactly once, non-empty, the right kind
+(JWT, `sb_publishable_`, `sb_secret_`, JSON), and `JWT_KEYS` / `JWT_JWKS` valid
+JSON. This also covers runbook steps 17–18.
+
+| Step | What | Result |
+|---|---|---|
+| 17–18 + shape | name · length · kind for all 20, then `python3 -m json.tool` on `JWT_KEYS` and `JWT_JWKS` | ✅ `20 checked`. `REALTIME_DB_ENC_KEY:16`, `VAULT_ENC_KEY:32`. `ANON_KEY` 169 / `SERVICE_ROLE_KEY` 180 / `*_ASYMMETRIC` 272 and 283 — all `jwt`. `SUPABASE_PUBLISHABLE_KEY:46:publishable`, `SUPABASE_SECRET_KEY:41:secret`. `JWT_KEYS:377`, `JWT_JWKS:329`, both valid JSON. Every `plain` value non-empty (32–64) |
+| 14–15 | `ls` both files `&&` `rm -f .env.old` `&&` `chmod 600 .env` `&&` `ls .env*` | ✅ `.env.old` gone; `.env` `-rw-------` 13749 bytes; `.env.example` 644 is the upstream template, no secrets |
+| 16 | placeholder grep | skipped — cannot fail on a copy (§3.6); superseded by the comparison and shape check |
+
+**§5 complete, 13 Sep 2026.** Growth's `.env` holds no secret shared with enroll —
+but it still carries enroll's project name, ports, URLs and the six function
+credentials until §6.
+
+**Port scheme checked against upstream `docker-compose.yml` at the pin** — the
+server's copy is checked by the §7 gates. `db` sets `PGPORT: ${POSTGRES_PORT}`,
+so Postgres *inside its container* listens on 5442 and every service reaches it
+at `db:5442` through the same variable — consistent. Supavisor's container ports
+are fixed at `5432`/`6543`; only the host side moves, via the override's
+`!override` list. The `api-gw` base mapping falls back through
+`${API_GW_HTTP_PORT:-${KONG_HTTP_PORT:-8000}}`, and the override drops the
+`KONG_HTTP_PORT` layer — which is why runbook step 20 is mandatory.
+
+`db` also mounts a **named** volume, `db-config`, which Compose prefixes with the
+project name. Under enroll's project name that resolves to enroll's own
+`enroll_db-config` — one more reason step 19 must precede any Compose command.
+
+### Runbook §6 — rewrite `.env`
+
+What enroll customised, found by comparing growth's `.env` with `.env.example`
+in the same folder — the 20 regenerated secrets skipped, other sensitive values
+masked. Result: **`16 settings differ from the upstream template`**.
+
+| Line | Setting | Enroll's value | Growth |
+|---|---|---|---|
+| 11 | `COMPOSE_FILE` | `docker-compose.yml:docker-compose.override.yml` | keep — step 26 requires exactly this |
+| 97 | `SUPABASE_PUBLIC_URL` | `https://api.enroll.lilbrahmas.org` | `https://api.growth.lilbrahmas.org` |
+| 101 | `API_EXTERNAL_URL` | `https://api.enroll.lilbrahmas.org/auth/v1` | `https://api.growth.lilbrahmas.org/auth/v1` |
+| 140 | `POOLER_TENANT_ID` | `enroll` | `growth` |
+| 166 | `SITE_URL` | `https://enroll.lilbrahmas.org` | `https://growth.lilbrahmas.org` |
+| 170 | `DISABLE_SIGNUP` | `true` | keep — §3.7 |
+| 180 | `ENABLE_EMAIL_AUTOCONFIRM` | `true` | **proposed `false`** — see below |
+| 190–191 | `ENABLE_PHONE_SIGNUP` / `ENABLE_PHONE_AUTOCONFIRM` | `false` / `false` | keep — step 25 |
+| 385 | `COMPOSE_PROJECT_NAME` | `enroll` | `growth` — step 19 |
+| 386–391 | `LARAVEL_API_BASE_URL`, `LARAVEL_CLIENT_ID`, `LARAVEL_CLIENT_SECRET`, `TELECRM_WEBHOOK_URL`, `TELECRM_ACCESS_TOKEN`, `LARAVEL_WEBHOOK_SECRET` | masked | delete — §3.6 |
+
+Not listed, so still at template values: the three ports, which steps 20–22 set
+to **8010 / 5442 / 6553**. `SMTP_*` and `OPENAI_API_KEY` match the template —
+upstream placeholders, so enroll carried **no real SMTP or OpenAI credential**
+into the copy. `JWT_EXPIRY`, `PGRST_DB_SCHEMAS` and `FUNCTIONS_VERIFY_JWT` are
+the template's too.
+
+**Why `ENABLE_EMAIL_AUTOCONFIRM=false`.** Enroll runs `true` because it has no
+SMTP and once took signups. Growth takes none: `DISABLE_SIGNUP=true`, and every
+user is created through the admin API with `email_confirm: true`, which this
+setting does not affect. It only matters if signups are ever reopened — and then
+`false` means a new address must confirm by email before it can sign in. With no
+SMTP configured here, such a signup errors instead of producing a usable
+§3.7 trainee account. That is the runbook's step 25 default.
+
+| Step | What | Result |
+|---|---|---|
+| 19 | exact-match `sed`: `COMPOSE_PROJECT_NAME=enroll` → `growth`, then print the line | ✅ `385:COMPOSE_PROJECT_NAME=growth`. From here Compose in growth's folder addresses project `growth`, not enroll — the hazard in *It is not only secrets* is closed |
+| 20–25 + delete | one exact-match `sed` script — 8 substitutions, 6 deletes, no spaces inside — then the comparison again | ✅ `12 settings differ`: `API_GW_HTTP_PORT=8010` (line 345), `POSTGRES_PORT=5442` (118), `POOLER_PROXY_PORT_TRANSACTION=6553` (129), `POOLER_TENANT_ID=growth`, the three `growth` URLs, `DISABLE_SIGNUP=true`, both phone settings `false`, `COMPOSE_PROJECT_NAME=growth`. `ENABLE_EMAIL_AUTOCONFIRM` back at the template's `false`; no `LARAVEL_` or `TELECRM_` line remains |
+| 26 | `COMPOSE_FILE` and `COMPOSE_PROJECT_NAME` present and correct | ✅ same output: `docker-compose.yml:docker-compose.override.yml` and `growth` |
+
+The terminal dropped a space in that paste — inside the `" [not in example]"`
+label string, where it can only change how a line looks. That is the reason every
+program here keeps its spaces inside quoted labels and nowhere else.
+
+**§6 complete, 13 Sep 2026.**
+
+### Runbook §7 — gates, then start
+
+| Step | What | Result |
+|---|---|---|
+| 27–32 | one `docker compose config` render piped straight into a filter that prints only names, counts, mount paths and ports | ✅ `name: growth` · `container_name lines: 0` · `GOTRUE_JWT_KEYS`, `API_JWT_JWKS`, `JWT_JWKS`, `SUPABASE_JWKS` x1 each · 16 bind mounts, every one under `/opt/supabase/stacks/growth/`, plus named volumes `db-config` and `deno-cache` (Compose prefixes them `growth_`) · `published: 8010 5442 6553` · `ALL PORTS LOOPBACK` |
+
+**Never run `docker compose config` unfiltered** — the render contains every
+secret in `.env`.
+
+**The runbook's health check can pass on a broken stack.**
+`docker compose ps --format '{{.Service}} {{.Status}}' | grep -vc healthy`
+(steps 35 and 50, and the README baseline) has three holes:
+
+- `(unhealthy)` contains the substring `healthy`, so an unhealthy container is
+  counted as healthy
+- `ps` without `-a` omits containers that have exited
+- an empty listing — wrong directory, Compose error — also prints `0`
+
+Growth's checks use `ps -a`, match the literal `(healthy)`, and print the total
+beside it, so a failure reads `11 … healthy: 10` or `0 … healthy: 0` rather than a
+pass.
+
+**Pre-start snapshot, 13 Sep 2026 07:03 UTC** — the instrument for "nothing
+disturbed", replacing §2 for that purpose. Also covers runbook §3 steps 3–4
+(disk, RAM), which had not been recorded.
+
+| Item | Value |
+|---|---|
+| coturn `MainPID` | `1911360` — unchanged since 12 Sep, so `upcp` did not restart it overnight |
+| coturn `ActiveEnterTimestamp` | `Wed 2026-08-26 00:46:34 UTC` |
+| coturn ports missing vs `/root/coturn-ports-pre-docker.txt` | `0` |
+| relay range | `32768 49151` |
+| NAT `REDIRECT` rules | `1` |
+| `iptables-save` | 74 lines, saved to `/root/growth-prestart-iptables.txt` |
+| Docker networks | `bridge`, `enroll_default`, `host`, `none` |
+| enroll containers | `11`, all `(healthy)` |
+| enroll `/auth/v1/health`, no key | `401` |
+| ports 3010 / 8010 / 5442 / 6553 | free |
+| memory | 31,835 MiB total, 25,885 available; swap 4,095 MiB, 0 used |
+| disk `/` (holds `/opt` and `/var/lib/containerd`) | 368 G free of 399 G |
+
+| Step | What | Result |
+|---|---|---|
+| 32–33 | port gate evaluated **inside** the start command — the filter's exit status gates `&& docker compose up -d`, so there is no window between check and start | ✅ `ALL PORTS LOOPBACK`, then `up 14/14`: network `growth_default`, volumes `growth_db-config` and `growth_deno-cache`, 11 containers `growth-<service>-1`. `db` healthy in 7.1 s, `studio` and `api-gw` healthy, the rest started. ~07:05 UTC 13 Sep 2026 |
+| 34 | `sleep 90` | not needed as a command — the next check runs later than that anyway |
+| 50–55 + firewall | same probes as the pre-start snapshot, plus `diff` of the full `iptables-save` against the saved copy | ✅ 07:09 UTC. coturn `MainPID` `1911360`, start time unchanged; ports missing `0`; relay range `32768 49151`; NAT `REDIRECT` `1`; networks now `bridge,enroll_default,growth_default,host,none`; enroll `11 healthy: 11`, API `401`. Firewall: **removed 0**, added 25 — 22 naming growth's bridge `br-f8aacf2a3643`, and 3 that do not (below) |
+
+**The 3 rules that do not name the bridge are growth's, and they restrict.**
+
+```
+-A PREROUTING -d 127.0.0.1/32 ! -i lo -p tcp -m tcp --dport 8010 -j DROP
+-A PREROUTING -d 127.0.0.1/32 ! -i lo -p tcp -m tcp --dport 5442 -j DROP
+-A PREROUTING -d 127.0.0.1/32 ! -i lo -p tcp -m tcp --dport 6553 -j DROP
+```
+
+They are exactly growth's three published ports, and they **drop** any packet
+addressed to `127.0.0.1:<port>` that arrives on an interface other than `lo` —
+Docker's guard against other machines reaching a port published on loopback. They
+are keyed on address and port rather than on the bridge, which is why the
+"names the bridge" criterion missed them: the criterion was too narrow, not the
+rules wrong. Enroll's ports should carry the same three rules in the pre-start
+copy — checked next.
+
+The pasted-back command read `docker networkls`, yet it printed the network list —
+so that dropped space was in the copy of the screen, not in what ran. Not every
+mangle is that benign: the earlier `-servername` one changed what executed.
+
+| Step | What | Result |
+|---|---|---|
+| precedent | loopback `DROP` rules in the **pre-start** firewall copy | ✅ the same three already existed for enroll's `8000`, `5432`, `6543`. Docker server `29.7.2`. The 3 "not on the bridge" rules are Docker's standard guard, now for growth's ports — firewall fully accounted for |
+| 35 (fixed) | `ps -a`, literal `(healthy)`, total beside it | ✅ `growth containers: 11 healthy: 11` |
+| 36 | roles in growth's database | ✅ 12: `anon`, `authenticated`, `service_role`, and nine `supabase_*` — `admin`, `auth_admin`, `etl_admin`, `functions_admin`, `privileged_role`, `read_only_user`, `realtime_admin`, `replication_admin`, `storage_admin`. Postgres initialised fresh |
+| 43–44 | listening sockets on 8010 / 5442 / 6553 | ✅ exactly `127.0.0.1:8010`, `127.0.0.1:5442`, `127.0.0.1:6553` — nothing on `0.0.0.0`, `*` or `[::]` |
+| 56 | growth's subnet against the host's routes | ✅ `172.19.0.0/16`. Routes: `default`, `172.17.0.0/16` (docker0), `172.18.0.0/16` (enroll), `172.19.0.0/16` (growth), host route `184.168.120.57` — no overlap |
+| key isolation, API-key layer | three GETs to growth's `/auth/v1/health` on `127.0.0.1:8010`: growth's publishable key, enroll's, none | 1 ✅ `{"version":"v2.189.0","name":"GoTrue",…} [200]`. 2 and 3 both `Unauthorized [401]` — **identical bodies**, so this alone cannot tell "enroll's key refused" from "enroll's key never read". Needs a positive control: the same extraction of enroll's key, sent to enroll's own gateway, must return 200 |
+
+**How the gateway behaves** — Envoy config at the pin,
+`volumes/api/envoy/lds.template.yaml`. A Lua filter compares `apikey` with the
+stack's own `ANON_KEY`, `SERVICE_ROLE_KEY`, `SUPABASE_PUBLISHABLE_KEY` and
+`SUPABASE_SECRET_KEY`, and answers a plain-text `Unauthorized` 401 for a missing
+**or** wrong key — which is why tests 2 and 3 cannot be told apart. It does
+**not** validate JWTs: a request's own `Authorization: Bearer` passes straight
+through to the service; a Bearer is synthesised from the apikey only when none is
+sent. The exact path `/rest/v1/` (the OpenAPI root) is RBAC-restricted to
+secret / service-role keys, so a token test aimed there is refused for the wrong
+reason. Token tests use a table path, `/rest/v1/isolation_probe`: PostgREST
+verifies the JWT first and only then looks for the table, so a good token gets
+"table not found" and a bad one gets a JWT error — bodies that differ, unlike the
+gateway's.
+
+**Isolation, completed 13 Sep 2026** — one command, five requests, all ✅:
+
+| Test | Sent | Result | Proves |
+|---|---|---|---|
+| A1 | enroll's publishable key → **enroll's** gateway, `127.0.0.1:8000/auth/v1/health` | `GoTrue v2.189.0 … [200]` | the extraction reads enroll's key correctly — so the earlier refusal at growth was a genuine wrong-key refusal |
+| T1 | growth's HS256 `ANON_KEY` → growth | `PGRST205` "Could not find the table" `[404]` | growth accepts its own `JWT_SECRET` tokens |
+| T2 | **enroll's** HS256 `ANON_KEY` → growth | `PGRST301` "None of the keys was able to decode the JWT" `[401]` | a token signed with enroll's `JWT_SECRET` is rejected |
+| T3 | growth's ES256 `ANON_KEY_ASYMMETRIC` → growth | `PGRST205` `[404]` | the local-JWKS wiring works — ES256 login tokens verify |
+| T4 | **enroll's** ES256 `ANON_KEY_ASYMMETRIC` → growth | `PGRST301` "No suitable key was found to decode the JWT" `[401]` | enroll's signing key is unknown to growth |
+
+T2 and T4 fail differently, and meaningfully: the HS256 token is tried against
+growth's keys and none verifies it; the ES256 token names a signing key (`kid`)
+that growth's JWKS does not contain at all.
+
+**The shared-secret risk from the task brief is closed by observation, not
+inference.** Growth's stack is running, healthy, loopback-only, and isolated
+from enroll. Not yet done: runbook §8 (Apache proxy for
+`api.growth.lilbrahmas.org`), §9 steps 45–48 that need it, 57–58.
+
+### Facts gathered for the remaining steps — 13 Sep 2026, ~07:20 UTC
+
+| Check | Result |
+|---|---|
+| 57 `docker compose ls` | ✅ `enroll running(11)` and `growth running(11)`, each listing only its own `docker-compose.yml` + override |
+| `/opt/supabase/README.md` | enroll's entry is `enroll = instance 1: 8000 / 5432 / 6543`, mid-file, above the upstream-branch note. Growth's step 58 entry, **not yet written**: `growth = instance 2: 8010 / 5442 / 6553` |
+| `/etc/apache2/conf.d/userdata/ssl/2_4/` | holds only `enroll/` — growth's `growthlilbrahmas/` does not exist yet. `userdata/std/2_4/` does not exist at all: enroll has no port-80 include |
+| enroll's API include, `ssl/2_4/enroll/api.enroll.lilbrahmas.org/*.conf` | exactly runbook step 38's five lines with `8000`. Growth's differs only in `8010`. The filename was matched by glob — confirm it (runbook says `supabase.conf`) |
+| `/home/growthlilbrahmas/public_html/.htaccess` | cPanel-generated only: MultiPHP INI directives and the `ea-php82` handler. **No `RewriteEngine`, no rewrites** — nothing can capture `/.well-known/` today |
+| API docroot `public_html/api.growth.lilbrahmas.org/` | `cgi-bin/`, `.htaccess` (908 bytes — same size as the parent's cPanel file, contents not yet read), `php.ini`, `.user.ini`, `.well-known/`. Enroll's API-docroot `.htaccess` is `RewriteEngine Off` only, belt and braces against an inherited rewrite; growth's has no such line |
+| frontend docroot | no index file — so runbook step 48's "frontend 200" cannot hold until the app is served. Expect cPanel's default or `403`; that is the serving design's business, not the stack's |
+
+### Remaining
+
+1. **Decision pending: runbook §8 now, or later.** Recommendation: now, while
+   the pre-start snapshot is fresh, so an Apache or cPanel problem is not coupled
+   to the first app deploy. §8 touches Apache for **every** site
+   (`apachectl configtest`, then `apachectl graceful`), makes
+   `https://api.growth.lilbrahmas.org` public (empty database, signups off) along
+   with Studio's basic-auth login — the same exposure enroll has — and does not
+   touch `growth.lilbrahmas.org`.
+2. **Step 58** — add growth's entry to `/opt/supabase/README.md`.
+3. **§8 steps 37–42** — include dir
+   `/etc/apache2/conf.d/userdata/ssl/2_4/growthlilbrahmas/api.growth.lilbrahmas.org/`,
+   the five lines with `8010`, `/scripts/ensure_vhost_includes --user=growthlilbrahmas`,
+   `configtest`, `graceful`, then the step 42 `grep` of `httpd.conf`. Decide
+   whether the API docroot `.htaccess` also gets enroll's `RewriteEngine Off`.
+4. **§9 steps 45–47** through the proxy, rewritten with literal paths (the
+   runbook's versions read `.env` relative to `cd /opt/supabase/stacks/$INST`).
+   Step 46 needs `--http1.1` and takes ~5 s: fast is broken, slow is working.
+5. **Re-run the host checks** (below) after the Apache reload.
+6. When the app's own proxy is eventually written for `growth.lilbrahmas.org`,
+   it must carry `ProxyPass /.well-known/ !` too — one SAN certificate covers
+   both names (§1).
+7. Not this runbook: step 49's RLS audit only means something after growth's
+   226 migrations are applied — deploy-kit work.
+
+**If this resumes on a later UTC day**, cPanel's `upcp` will have run again at
+~00:46. Take a fresh snapshot before touching Apache rather than comparing
+against 13 Sep's.
+
+### Reusable checks — proven on 13 Sep 2026
+
+Nothing disturbed. Expect: coturn `MainPID=1911360` and its start time unchanged,
+`missing 0`, relay `32768 49151`, `REDIRECT 1`,
+`removed: 0 added: 25 added-not-on-growth-bridge: 3` with **exactly** the three
+loopback `DROP` lines for 8010 / 5442 / 6553 printed above it, networks including
+`growth_default`, enroll `11 healthy: 11`, enroll API `401`.
+
+```
+date -u; systemctl show coturn --property=MainPID,ActiveEnterTimestamp; echo "coturn ports missing vs 17 Aug: $(comm -13 <(ss -tulnp | grep turnserver | awk '{print $1, $5}' | sort -u) /root/coturn-ports-pre-docker.txt | wc -l)"; echo "relay range: $(sysctl -n net.ipv4.ip_local_port_range)"; echo "nat REDIRECT: $(iptables-save -t nat | grep -c REDIRECT)"; awk 'FILENAME==ARGV[1]{if($1!="")b="br-"substr($1,1,12);next}/^</{r++;print}/^>/{a++;if(b==""||index($0,b)==0){o++;print}}END{print("bridge "b" iptables removed: "r+0" added: "a+0" added-not-on-growth-bridge: "o+0)}' <(docker network inspect growth_default -f '{{.Id}}') <(diff <(grep -v '^#' /root/growth-prestart-iptables.txt | sed 's/\[[0-9]*:[0-9]*\]//') <(iptables-save | grep -v '^#' | sed 's/\[[0-9]*:[0-9]*\]//')); echo "networks: $(docker network ls --format '{{.Name}}' | sort | tr '\n' ,)"; (cd /opt/supabase/stacks/enroll && docker compose ps -a --format '{{.Status}}') | awk '{t++}/\(healthy\)/{ok++}END{print("enroll containers: "t+0" healthy: "ok+0)}'; echo "enroll api: $(curl -s -o /dev/null -m 10 -w '%{http_code}' https://api.enroll.lilbrahmas.org/auth/v1/health)"
+```
+
+Growth's containers. Expect `growth containers: 11 healthy: 11` and no
+`NOT HEALTHY` lines.
+
+```
+(cd /opt/supabase/stacks/growth && docker compose ps -a --format '{{.Service}}:{{.Status}}') | awk '{t++}/\(healthy\)/{ok++;next}{print("NOT HEALTHY "$0)}END{print("growth containers: "t+0" healthy: "ok+0)}'
+```
+
+Every `sed` in §6 matches the **full current value** (`=enroll$`, `=8000$`, …),
+not `=.*`. The match doubles as the verify-before-change: if a value is not what
+the comparison showed, that edit is a no-op and the check after it shows the old
+value instead of silently overwriting something unexpected.
 
 ---
 

@@ -1,6 +1,6 @@
 # growth.lilbrahmas.org — deploy kit
 
-**Status: git, DNS, cPanel and SSL are done. The Supabase stack is not created.**
+**Status: git, DNS, cPanel and SSL are done. The Supabase stack is copied but not configured — it still holds enroll's secrets and must not be started.**
 
 This folder is the deploy kit for the second app on the VPS. It is deliberately
 thin right now — most of enroll's documents are records of a migration that has
@@ -28,8 +28,8 @@ written when the work it describes actually happens.
 | ✅ **cPanel** | one account `growthlilbrahmas` owns both hostnames, enroll's shape. `api.growth.lilbrahmas.com` was created by mistake and has been terminated |
 | ✅ **DNS** | both names resolve to `184.168.122.104`, authoritatively and publicly |
 | ✅ **SSL** | one Let's Encrypt SAN cert covers both hostnames, valid to 11 Dec 2026 |
-| ❌ **Supabase stack** | not created — `/opt/supabase/stacks/` holds only `enroll`. Next step: `STACK-PROVISIONING.md` §4 |
-| ❌ **`.env.production.local`** | blocked: needs the publishable key from a stack that does not exist |
+| ✅ **Supabase stack** | running since ~07:05 UTC 13 Sep 2026 at `/opt/supabase/stacks/growth`: 11/11 healthy, ports 8010 / 5442 / 6553 on loopback only, keys and tokens proven isolated from enroll, enroll and coturn verified undisturbed. Empty database — no migrations applied. **Not yet public:** the Apache proxy (runbook §8) is not written |
+| 🟡 **`.env.production.local`** | no longer blocked on the stack — growth's publishable key now exists in the stack `.env`. Where the app's runtime variables live is still part of the open serving design |
 | ❌ **Serving** | design not started. See *The finding that changed the plan*. |
 
 ---
@@ -177,36 +177,17 @@ served directly by Apache.
 
 **The baseline below was captured on 12 Sep 2026** — recorded values are in
 `STACK-PROVISIONING.md` §2, which also explains why the raw coturn capture is
-unusable for comparison and which file to use instead. The next action is now
-`STACK-PROVISIONING.md` §4, copying the stack.
+unusable for comparison and which file to use instead.
 
-These remain the commands to re-run at the end, to prove nothing was disturbed:
+**Since 13 Sep 2026 that baseline is superseded.** The stack was started at
+~07:05 UTC that day. For anything after it, compare against the **pre-start
+snapshot** (07:03 UTC) and use the **reusable checks** — both in
+`STACK-PROVISIONING.md` §4, which ends with the list of what remains.
 
-```bash
-ss -tulnp | grep turnserver | awk '{print $1, $5}' | sort -u > /root/growth-baseline-coturn.txt; wc -l < /root/growth-baseline-coturn.txt
-```
-
-```bash
-systemctl show coturn --property=MainPID --property=ActiveEnterTimestamp | tee /root/growth-baseline-coturn-pid.txt
-```
-
-```bash
-iptables-save -t nat | grep -c REDIRECT | tee /root/growth-baseline-nat-redirects.txt
-```
-
-```bash
-docker network ls | tee /root/growth-baseline-networks.txt
-```
-
-```bash
-cd /opt/supabase/stacks/enroll && docker compose ps --format '{{.Service}} {{.Status}}' | grep -vc healthy
-```
-
-```bash
-ss -tln | grep -E ":(3010|8010|5442|6553)\b" || echo "PORTS FREE"
-```
-
-Enroll's health check must print `0`. The port check must print `PORTS FREE`.
+The capture commands that used to sit here were removed on purpose: they
+**overwrite** the baseline files they write to, so re-running them "at the end"
+destroys the thing being compared against — and the enroll health check among
+them (`grep -vc healthy`) passes on unhealthy or exited containers.
 
 ---
 
