@@ -570,9 +570,9 @@ below. Step 48 cannot pass until the app is served.
    added to `public_html/.htaccess`, such as a cPanel Redirect or an HTTPS rule,
    from capturing `/.well-known/` on the API name and breaking renewal of the
    shared certificate.
-9. **The adding-instance runbook still has the problems found on 14 Sep**, listed
-   under *Runbook corrections found on 14 Sep* below. Not yet applied to
-   `supabase-adding-instance-runbook.md`.
+9. ✅ **The runbook corrections found on 14 Sep are applied** to
+   `supabase-adding-instance-runbook.md`: steps 38–41, 47, 48, 58 and §10. See
+   *Runbook corrections found on 14 Sep* below.
 
 **If this resumes on a later UTC day**, cPanel's `upcp` will have run again at
 ~00:46. Take a fresh snapshot before touching Apache rather than comparing
@@ -756,7 +756,9 @@ The `.htaccess` line can stay: it affects nothing but `/.well-known/`.
 
 #### Runbook corrections found on 14 Sep
 
-Not yet applied to `supabase-adding-instance-runbook.md`:
+Applied to `supabase-adding-instance-runbook.md` the same day: new steps 38a–38c
+and 39a–39b, rewritten steps 38–41, 47, 48 and 58, and §10's rollback. The step
+numbers below are the runbook's numbers from before that change.
 
 1. **Step 39 reloads Apache before step 40 tests the config.**
    `ensure_vhost_includes` restarts Apache itself unless given `--no-restart`.

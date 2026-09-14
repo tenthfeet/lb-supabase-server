@@ -415,9 +415,9 @@ docker compose exec -T db psql -U postgres -tAc "select rolname from pg_roles wh
 mkdir -p /etc/apache2/conf.d/userdata/ssl/2_4/<cpuser>/api.<new>.lilbrahmas.org
 ```
 
-**38.** Write the config, one line at a time, to
-`.../api.<new>.lilbrahmas.org/supabase.conf`, substituting this instance's
-gateway port:
+**38.** The config is these five lines, with this instance's gateway port. Do
+not write them straight into the include directory: steps 38a–38c build the file
+in `/root`, test it, and only then install it.
 
 ```
 ProxyPreserveHost On
@@ -435,23 +435,99 @@ RequestHeader set X-Forwarded-Proto "https"
   as of Apache 2.4.47 (addendum §1).
 - **`127.0.0.1`, never `localhost`** (prep §4.3c).
 
-**39.** Register the include.
+**38a.** Build the file from instance 1's working copy, changing only the port.
+`diff` must show exactly lines 3–4, the two port lines.
 
 ```
-/scripts/ensure_vhost_includes --user=<cpuser>
+sed 's|127\.0\.0\.1:8000/|127.0.0.1:<GATEWAY>/|g' /etc/apache2/conf.d/userdata/ssl/2_4/enroll/api.enroll.lilbrahmas.org/supabase.conf > /root/<new>-api-supabase.conf && diff /etc/apache2/conf.d/userdata/ssl/2_4/enroll/api.enroll.lilbrahmas.org/supabase.conf /root/<new>-api-supabase.conf
 ```
 
-**40.** Test before applying.
+**38b.** Syntax-test it on top of the live config. `-t` only parses, and `-c`
+adds a directive after the config is read, so nothing is applied. The first
+command names a file that does not exist and **must fail**. That proves `-c`
+reads the file, so the second command's `Syntax OK` is about this file.
 
 ```
-apachectl configtest
+httpd -t -c 'Include /root/<new>-no-such-file.conf'
+```
+```
+httpd -t -c 'Include /root/<new>-api-supabase.conf'
 ```
 
-**41.** Apply. Graceful, not restart.
+**38c.** Install the tested file. Nothing live changes yet: Apache reads it only
+after step 39 wires it into `httpd.conf` and step 41 reloads.
 
 ```
-apachectl graceful
+cp /root/<new>-api-supabase.conf /etc/apache2/conf.d/userdata/ssl/2_4/<cpuser>/api.<new>.lilbrahmas.org/supabase.conf
 ```
+
+**39.** Keep a copy of `httpd.conf`, then register the include **without
+reloading**. `ensure_vhost_includes` restarts Apache by itself whenever it
+updates a vhost, unless it is given `--no-restart`. Run bare, as this step once
+was, it reloads every site before anything has tested the new config.
+`--no-restart` goes last: if the space before it is lost, the user name becomes
+invalid, no vhost is updated, and nothing reloads.
+
+```
+(set -C && cat /etc/apache2/conf/httpd.conf > /root/<new>-pre-include-httpd.conf) && /scripts/ensure_vhost_includes --user=<cpuser> --no-restart
+```
+
+**39a.** Prove Apache did not reload. **Must print `404`:** with the proxy not
+loaded, Apache looks for a file. `401` would be Envoy answering, meaning Apache
+reloaded.
+
+```
+sleep 10; curl -s -o /dev/null -m 10 -w '%{http_code}\n' https://api.<new>.lilbrahmas.org/auth/v1/health
+```
+
+**39b.** Review what the rebuild changed, site by site. `ensure_vhost_includes`
+re-emits the account's vhost blocks and may put them in a new order, so a plain
+`diff` of `httpd.conf` shows hundreds of lines for a one-line change. This
+compares each site's block before and after, keyed by address and `ServerName`,
+ignoring `ServerAlias` word order, and skips the new include only inside the
+new hostname's `:443` block. **Expect `differing: 0` and `new include lines: 1`,
+with no `DIFFERS` lines.**
+
+```
+awk 'FNR==1{f++;k="GLOBAL";h=""}/^[[:space:]]*<VirtualHost/{h=$2;k=h;next}/^[[:space:]]*<\/VirtualHost>/{k="GLOBAL";next}/^[[:space:]]*ServerName/{k=h"|"$2}$1=="ServerAlias"{n=split($0,w);asort(w);s="";for(j=1;j<=n;j++)s=s" "w[j];$0=s}f==2&&k~/:443.*\|api\.<new>\.lilbrahmas\.org$/&&/^[[:space:]]*Include.*userdata\/ssl\/2_4\/<cpuser>\/api\.<new>\.lilbrahmas\.org\//{inc++;next}{b[f,k]=b[f,k]"\n"$0;K[k]=1}END{for(k in K)if(b[1,k]!=b[2,k]){d++;print("DIFFERS "k)}print("site blocks compared: "length(K)" differing: "d+0" new include lines: "inc+0)}' /root/<new>-pre-include-httpd.conf /etc/apache2/conf/httpd.conf
+```
+
+Block order matters only for which vhost is an address's default. `httpd -S`
+prints those for the old file and the new one: **the same names**. Line numbers
+after the new hostname's blocks are one higher.
+
+```
+httpd -S -f /root/<new>-pre-include-httpd.conf 2>&1 | awk '/default server/{n++;print("old "$3" "$4)}END{print("old default servers: "n+0)}'; httpd -S 2>&1 | awk '/default server/{n++;print("new "$3" "$4)}END{print("new default servers: "n+0)}'
+```
+
+A `DIFFERS` line or a changed default site stops §8 here.
+
+**40.** See what a reload would apply. A reload loads everything on disk, not only
+this change, and Apache may not have reloaded for days, so anything cPanel wrote
+in the meantime would go live now and look like this instance's doing. This
+prints each site's code, where the new API must still be `404`, and the last
+reload's log line. For more than one existing instance, add its hostnames and
+raise the `of 4`.
+
+```
+curl -s -m 10 -w '\nCODE %{http_code} %{url_effective}\n' https://enroll.lilbrahmas.org/ https://api.enroll.lilbrahmas.org/auth/v1/health https://<new>.lilbrahmas.org/ https://api.<new>.lilbrahmas.org/auth/v1/health | awk '/^CODE/{n++;print}END{print("urls checked: "n+0" of 4")}'; awk '/resuming normal operations/{t=$0}END{print("last reload: "t)}' /etc/apache2/logs/error_log
+```
+
+**41.** Gate, test, apply and re-check, in one line. Each part runs only if the
+one before it passed. Put the last reload's time into `-newermt` as
+`YYYY-MM-DD HH:MM:SS`. The gate opens only if the files changed since then are
+this step's own: the new `supabase.conf` and `httpd.conf`, plus cPanel's
+`httpd.conf.datastore` cache if it was written. Anything else prints as
+`NOT THIS STEP` and nothing reloads, and an empty `find` keeps the gate shut
+too. Graceful, not restart.
+
+```
+find /etc/apache2 /var/cpanel/ssl/apache_tls -type f -newermt '<YYYY-MM-DD HH:MM:SS>' | awk '$0=="/etc/apache2/conf.d/userdata/ssl/2_4/<cpuser>/api.<new>.lilbrahmas.org/supabase.conf"||$0=="/etc/apache2/conf/httpd.conf"{r++;next}$0=="/etc/apache2/conf/httpd.conf.datastore"{next}{o++;print("NOT THIS STEP "$0)}END{print("changed since last reload: expected "r+0" of 2, other "o+0);exit(!(r==2&&o==0))}' && apachectl configtest && apachectl graceful && sleep 5 && curl -s -m 10 -w '\nCODE %{http_code} %{url_effective}\n' https://enroll.lilbrahmas.org/ https://api.enroll.lilbrahmas.org/auth/v1/health https://<new>.lilbrahmas.org/ https://api.<new>.lilbrahmas.org/auth/v1/health | awk '/^CODE/{n++;print}END{print("urls checked: "n+0" of 4")}'
+```
+
+**Expect** `expected 2 of 2, other 0`, `Syntax OK`, then the same codes as step
+40 except the new API: `404` becomes `401`, Envoy refusing a request with no
+key.
 
 **42.** Confirm it is wired. cPanel references the directory as a glob, so
 grepping for the filename returns nothing even when correct.
@@ -490,27 +566,42 @@ looks exactly like a broken proxy. **Fast is broken, slow is working.**
 curl -s -m 5 -o /dev/null -w '%{http_code}\n' --http1.1 -H "apikey: $(grep '^SUPABASE_PUBLISHABLE_KEY=' .env | cut -d= -f2-)" -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' 'https://api.<new>.lilbrahmas.org/realtime/v1/websocket?vsn=1.0.0'
 ```
 
-**47.** ACME probe — write the file, fetch it, delete it. Middle command **must
-print `probe`**. Three separate commands; skipping the first gives a 404 that
-looks like failure.
+**47.** ACME probe. AutoSSL renews the certificate by writing a file under
+`/.well-known/acme-challenge/` **as the cPanel account** and having Let's
+Encrypt fetch it. First confirm that folder exists and belongs to `<cpuser>`.
+**Do not create it as root:** AutoSSL cannot write into a root-owned
+`acme-challenge/`, and the certificate then expires ~90 days later without
+warning.
 
 ```
-mkdir -p /home/<cpuser>/public_html/api.<new>.lilbrahmas.org/.well-known/acme-challenge
-```
-```
-echo probe > /home/<cpuser>/public_html/api.<new>.lilbrahmas.org/.well-known/acme-challenge/probe
-```
-```
-curl -sL http://api.<new>.lilbrahmas.org/.well-known/acme-challenge/probe
-```
-```
-rm -f /home/<cpuser>/public_html/api.<new>.lilbrahmas.org/.well-known/acme-challenge/probe
+ls -la /home/<cpuser>/public_html/api.<new>.lilbrahmas.org/.well-known/
 ```
 
-**48.** Frontend. Expect `200`.
+If `acme-challenge` is missing, create it and hand it to the account in the same
+line:
 
 ```
-curl -s -o /dev/null -w '%{http_code}\n' https://<new>.lilbrahmas.org/
+mkdir -p /home/<cpuser>/public_html/api.<new>.lilbrahmas.org/.well-known/acme-challenge && chown -R <cpuser>:<cpuser> /home/<cpuser>/public_html/api.<new>.lilbrahmas.org/.well-known
+```
+
+Then write a probe file, fetch it over **HTTP and HTTPS**, and delete it. **Both
+fetches must print `probe` with `[200 …]`.**
+
+```
+echo probe > /home/<cpuser>/public_html/api.<new>.lilbrahmas.org/.well-known/acme-challenge/probe && curl -s -m 10 -L -w ' [%{http_code} %{url_effective}]\n' http://api.<new>.lilbrahmas.org/.well-known/acme-challenge/probe; curl -s -m 10 -w ' [%{http_code} %{url_effective}]\n' https://api.<new>.lilbrahmas.org/.well-known/acme-challenge/probe; rm -f /home/<cpuser>/public_html/api.<new>.lilbrahmas.org/.well-known/acme-challenge/probe
+```
+
+The HTTPS fetch is the one that tests `ProxyPass /.well-known/ !`. Step 38's
+include sits in the SSL vhost only, so when port 80 does not redirect (growth's
+does not), the HTTP fetch never meets the proxy and passes even with that line
+missing. Without the line, the HTTPS fetch gets Envoy's `Unauthorized`.
+
+**48.** Frontend. **Check the content, not the status code:** a docroot with no
+index file answers `200` with Apache's own `Index of /` listing. Expect the app's
+`<title>`. `Index of /` means nothing is being served yet.
+
+```
+curl -s -m 10 -w '\nCODE %{http_code}\n' https://<new>.lilbrahmas.org/ | awk '/<title>|^CODE/{n++;print}END{print("lines: "n+0)}'
 ```
 
 **49.** RLS audit. `(0 rows)` is the pass condition.
@@ -574,10 +665,20 @@ docker network inspect ${INST}_default -f '{{range .IPAM.Config}}{{.Subnet}}{{en
 docker compose ls
 ```
 
-**58.** Record the instance.
+**58.** Record the instance **directly under the last instance line**. The upstream
+branch note comes after those lines, so appending with `>>` would put the new
+entry below the note, away from the others. List them first:
 
 ```
-echo "$INST = instance $N: $((8000+10*(N-1))) / $((5432+10*(N-1))) / $((6543+10*(N-1)))" >> /opt/supabase/README.md
+awk '/.=.instance.[0-9]+:./{n++;print(FNR": "$0)}END{print("instance lines: "n+0" of "NR)}' /opt/supabase/README.md
+```
+
+Then insert under the last one, writing that line's spaces as `.` in the
+pattern. The pattern must match the whole line: if it does not, nothing is
+inserted and the listing afterwards shows it. With growth as the last instance:
+
+```
+sed --in-place "/^growth.=.instance.2:.8010.\/.5442.\/.6553\$/a $INST = instance $N: $((8000+10*(N-1))) / $((5432+10*(N-1))) / $((6543+10*(N-1)))" /opt/supabase/README.md && awk '/.=.instance.[0-9]+:./{n++;print(FNR": "$0)}END{print("instance lines: "n+0" of "NR)}' /opt/supabase/README.md
 ```
 
 ---
@@ -591,8 +692,31 @@ ports.
 |---|---|
 | Copied only | `rm -rf /opt/supabase/stacks/$INST` |
 | Started | `cd /opt/supabase/stacks/$INST && docker compose down -v` then `rm -rf` |
-| Apache configured | `rm /etc/apache2/conf.d/userdata/ssl/2_4/<cpuser>/api.<new>.lilbrahmas.org/supabase.conf` then `apachectl configtest && apachectl graceful` |
+| Apache configured | the two steps below, **not** `rm` of the include first |
 | DNS added | Remove the record at GoDaddy |
+
+**Rolling back §8.** Deleting `supabase.conf` while `httpd.conf` still has the
+active `Include ".../api.<new>.lilbrahmas.org/*.conf"` leaves a wildcard that
+matches no file. Apache 2.4 documents that as an error for `Include` (unlike
+`IncludeOptional`): `configtest` fails, `graceful` is refused, and a full
+restart or reboot would leave Apache down for every site. Not tested on this
+box. Do it in this order instead:
+
+1. Empty the include to a comment, then reload. The proxy is off and the
+   wildcard still matches.
+
+   ```
+   printf '%s\n' '# rolled back' > /etc/apache2/conf.d/userdata/ssl/2_4/<cpuser>/api.<new>.lilbrahmas.org/supabase.conf && apachectl configtest && apachectl graceful
+   ```
+
+2. Un-wire it in one chain, so the broken state lasts seconds with no reload
+   inside it: remove the file and its directory, let `ensure_vhost_includes`
+   comment the `Include` out, then test and reload. If `configtest` fails here,
+   put step 1's comment-only file back before anything else.
+
+   ```
+   rm /etc/apache2/conf.d/userdata/ssl/2_4/<cpuser>/api.<new>.lilbrahmas.org/supabase.conf && rmdir /etc/apache2/conf.d/userdata/ssl/2_4/<cpuser>/api.<new>.lilbrahmas.org && /scripts/ensure_vhost_includes --user=<cpuser> --no-restart && apachectl configtest && apachectl graceful
+   ```
 
 After any rollback, re-run steps 50–55.
 
