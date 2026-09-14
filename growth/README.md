@@ -1,6 +1,6 @@
 # growth.lilbrahmas.org — deploy kit
 
-**Status: git, DNS, cPanel and SSL are done. The Supabase stack is copied but not configured — it still holds enroll's secrets and must not be started.**
+**Status: git, DNS, cPanel and SSL are done. The Supabase stack is complete: running, isolated from enroll, registered as instance 2, and public at https://api.growth.lilbrahmas.org since 14 Sep 2026. Its database is empty. Serving the app is not designed yet.**
 
 This folder is the deploy kit for the second app on the VPS. It is deliberately
 thin right now — most of enroll's documents are records of a migration that has
@@ -28,7 +28,7 @@ written when the work it describes actually happens.
 | ✅ **cPanel** | one account `growthlilbrahmas` owns both hostnames, enroll's shape. `api.growth.lilbrahmas.com` was created by mistake and has been terminated |
 | ✅ **DNS** | both names resolve to `184.168.122.104`, authoritatively and publicly |
 | ✅ **SSL** | one Let's Encrypt SAN cert covers both hostnames, valid to 11 Dec 2026 |
-| ✅ **Supabase stack** | running since ~07:05 UTC 13 Sep 2026 at `/opt/supabase/stacks/growth`: 11/11 healthy, ports 8010 / 5442 / 6553 on loopback only, keys and tokens proven isolated from enroll, enroll and coturn verified undisturbed. Empty database — no migrations applied. **Not yet public:** the Apache proxy (runbook §8) is not written |
+| ✅ **Supabase stack** | running since ~07:05 UTC 13 Sep 2026 at `/opt/supabase/stacks/growth`: 11/11 healthy, ports 8010 / 5442 / 6553 on loopback only, keys and tokens proven isolated from enroll, enroll and coturn verified undisturbed. Empty database — no migrations applied. Registered as `growth = instance 2` in `/opt/supabase/README.md`. **Public since 14 Sep 2026** at `https://api.growth.lilbrahmas.org` through Apache (runbook §8–§9 verified): GoTrue, WebSocket and the ACME renewal path work through the proxy, Studio asks for its basic-auth login, and enroll and coturn were verified undisturbed |
 | 🟡 **`.env.production.local`** | no longer blocked on the stack — growth's publishable key now exists in the stack `.env`. Where the app's runtime variables live is still part of the open serving design |
 | ❌ **Serving** | design not started. See *The finding that changed the plan*. |
 
@@ -175,6 +175,10 @@ served directly by Apache.
 
 ## Next step
 
+**The Supabase stack is finished as of 14 Sep 2026.** Next comes the serving
+design, starting with the open questions above, and after it growth's 226
+migrations. Neither has started.
+
 **The baseline below was captured on 12 Sep 2026** — recorded values are in
 `STACK-PROVISIONING.md` §2, which also explains why the raw coturn capture is
 unusable for comparison and which file to use instead.
@@ -182,7 +186,10 @@ unusable for comparison and which file to use instead.
 **Since 13 Sep 2026 that baseline is superseded.** The stack was started at
 ~07:05 UTC that day. For anything after it, compare against the **pre-start
 snapshot** (07:03 UTC) and use the **reusable checks** — both in
-`STACK-PROVISIONING.md` §4, which ends with the list of what remains.
+`STACK-PROVISIONING.md` §4, which ends with the list of what remains. Before the
+Apache work on 14 Sep a fresh snapshot was taken (04:31 UTC) and the firewall
+was saved again to `/root/growth-preproxy-iptables.txt`. From then on the
+firewall is compared against that copy.
 
 The capture commands that used to sit here were removed on purpose: they
 **overwrite** the baseline files they write to, so re-running them "at the end"

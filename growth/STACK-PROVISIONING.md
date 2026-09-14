@@ -24,7 +24,7 @@ happens; what is written here has been run and verified unless marked otherwise.
 | ✅ ACME path proven | probe files fetched over plain HTTP from both hostnames |
 | ✅ SSL issued | Let's Encrypt, `ssl_verify=0` on both, valid to **11 Dec 2026** |
 | ✅ Stack | running at `/opt/supabase/stacks/growth` since ~07:05 UTC 13 Sep 2026 — 11/11 healthy, ports on loopback only, keys and tokens proven isolated from enroll, enroll and coturn verified undisturbed. See §4. Empty database, no migrations applied |
-| ❌ Apache reverse proxy | not written |
+| ✅ Apache reverse proxy | `https://api.growth.lilbrahmas.org` → `127.0.0.1:8010` since 14 Sep 2026. Verified through the proxy at 05:19 UTC: GoTrue `200` with the key, WebSocket `101` after 5 s, ACME probe `200` over HTTP and HTTPS, Studio `401` asking for basic auth. enroll and coturn verified undisturbed. See §4 |
 | ❌ Serving design for the app | still open — see `README.md` |
 
 ### The `.com` mistake, for the record
@@ -527,45 +527,52 @@ that growth's JWKS does not contain at all.
 
 **The shared-secret risk from the task brief is closed by observation, not
 inference.** Growth's stack is running, healthy, loopback-only, and isolated
-from enroll. Not yet done: runbook §8 (Apache proxy for
-`api.growth.lilbrahmas.org`), §9 steps 45–48 that need it, 57–58.
+from enroll. Runbook §8 (Apache proxy for `api.growth.lilbrahmas.org`), §9
+through it, and steps 57–58 followed on 13–14 Sep: see *Step 58, §8 and §9*
+below. Step 48 cannot pass until the app is served.
 
 ### Facts gathered for the remaining steps — 13 Sep 2026, ~07:20 UTC
 
 | Check | Result |
 |---|---|
 | 57 `docker compose ls` | ✅ `enroll running(11)` and `growth running(11)`, each listing only its own `docker-compose.yml` + override |
-| `/opt/supabase/README.md` | enroll's entry is `enroll = instance 1: 8000 / 5432 / 6543`, mid-file, above the upstream-branch note. Growth's step 58 entry, **not yet written**: `growth = instance 2: 8010 / 5442 / 6553` |
+| `/opt/supabase/README.md` | enroll's entry is `enroll = instance 1: 8000 / 5432 / 6543`, mid-file, above the upstream-branch note. Growth's step 58 entry: ✅ written 14 Sep 2026, see *Step 58, §8 and §9* below |
 | `/etc/apache2/conf.d/userdata/ssl/2_4/` | holds only `enroll/` — growth's `growthlilbrahmas/` does not exist yet. `userdata/std/2_4/` does not exist at all: enroll has no port-80 include |
 | enroll's API include, `ssl/2_4/enroll/api.enroll.lilbrahmas.org/*.conf` | exactly runbook step 38's five lines with `8000`. Growth's differs only in `8010`. The filename was matched by glob — confirm it (runbook says `supabase.conf`) |
 | `/home/growthlilbrahmas/public_html/.htaccess` | cPanel-generated only: MultiPHP INI directives and the `ea-php82` handler. **No `RewriteEngine`, no rewrites** — nothing can capture `/.well-known/` today |
-| API docroot `public_html/api.growth.lilbrahmas.org/` | `cgi-bin/`, `.htaccess` (908 bytes — same size as the parent's cPanel file, contents not yet read), `php.ini`, `.user.ini`, `.well-known/`. Enroll's API-docroot `.htaccess` is `RewriteEngine Off` only, belt and braces against an inherited rewrite; growth's has no such line |
-| frontend docroot | no index file — so runbook step 48's "frontend 200" cannot hold until the app is served. Expect cPanel's default or `403`; that is the serving design's business, not the stack's |
+| API docroot `public_html/api.growth.lilbrahmas.org/` | `cgi-bin/`, `.htaccess` (908 bytes, byte-identical to the parent's cPanel file: read 14 Sep, no rewrites), `php.ini`, `.user.ini`, `.well-known/`. Enroll's API-docroot `.htaccess` is `RewriteEngine Off` only, belt and braces against an inherited rewrite; growth's has no such line |
+| frontend docroot | no index file. **Correction, 14 Sep 2026:** it answers `200` with Apache's `Index of /` listing, not cPanel's default or `403`. So step 48's bare "frontend 200" passes without the app and proves nothing; once the app is served it must check content. That is the serving design's business, not the stack's |
 
 ### Remaining
 
-1. **Decision pending: runbook §8 now, or later.** Recommendation: now, while
-   the pre-start snapshot is fresh, so an Apache or cPanel problem is not coupled
-   to the first app deploy. §8 touches Apache for **every** site
+1. **Decided 14 Sep 2026, ~04:20 UTC: runbook §8 now**, so an Apache or cPanel
+   problem is not coupled to the first app deploy. `upcp` ran at ~00:46 UTC that
+   day, so a fresh snapshot replaces 13 Sep's before Apache is touched.
+   §8 touches Apache for **every** site
    (`apachectl configtest`, then `apachectl graceful`), makes
    `https://api.growth.lilbrahmas.org` public (empty database, signups off) along
    with Studio's basic-auth login — the same exposure enroll has — and does not
    touch `growth.lilbrahmas.org`.
-2. **Step 58** — add growth's entry to `/opt/supabase/README.md`.
-3. **§8 steps 37–42** — include dir
-   `/etc/apache2/conf.d/userdata/ssl/2_4/growthlilbrahmas/api.growth.lilbrahmas.org/`,
-   the five lines with `8010`, `/scripts/ensure_vhost_includes --user=growthlilbrahmas`,
-   `configtest`, `graceful`, then the step 42 `grep` of `httpd.conf`. Decide
-   whether the API docroot `.htaccess` also gets enroll's `RewriteEngine Off`.
-4. **§9 steps 45–47** through the proxy, rewritten with literal paths (the
-   runbook's versions read `.env` relative to `cd /opt/supabase/stacks/$INST`).
-   Step 46 needs `--http1.1` and takes ~5 s: fast is broken, slow is working.
-5. **Re-run the host checks** (below) after the Apache reload.
+2. ~~**Step 58** — add growth's entry to `/opt/supabase/README.md`.~~ ✅ 14 Sep 2026.
+3. ✅ **§8 steps 37–42**, 14 Sep 2026. The include was syntax-tested before it
+   was installed, wired with `ensure_vhost_includes --no-restart`, and loaded by
+   a gated `configtest && graceful`.
+4. ✅ **§9 steps 43–47** through the proxy, 14 Sep 2026, with literal paths.
+5. ✅ **Host checks re-run** after the reload: nothing disturbed.
 6. When the app's own proxy is eventually written for `growth.lilbrahmas.org`,
    it must carry `ProxyPass /.well-known/ !` too — one SAN certificate covers
    both names (§1).
 7. Not this runbook: step 49's RLS audit only means something after growth's
    226 migrations are applied — deploy-kit work.
+8. ✅ **Decided 14 Sep 2026: the API docroot `.htaccess` gets `RewriteEngine Off`**,
+   appended below cPanel's marked blocks at 04:59 UTC. The parent `.htaccess`
+   has no rewrites today, so this changes nothing now. It stops any rewrite later
+   added to `public_html/.htaccess`, such as a cPanel Redirect or an HTTPS rule,
+   from capturing `/.well-known/` on the API name and breaking renewal of the
+   shared certificate.
+9. **The adding-instance runbook still has the problems found on 14 Sep**, listed
+   under *Runbook corrections found on 14 Sep* below. Not yet applied to
+   `supabase-adding-instance-runbook.md`.
 
 **If this resumes on a later UTC day**, cPanel's `upcp` will have run again at
 ~00:46. Take a fresh snapshot before touching Apache rather than comparing
@@ -590,10 +597,188 @@ Growth's containers. Expect `growth containers: 11 healthy: 11` and no
 (cd /opt/supabase/stacks/growth && docker compose ps -a --format '{{.Service}}:{{.Status}}') | awk '{t++}/\(healthy\)/{ok++;next}{print("NOT HEALTHY "$0)}END{print("growth containers: "t+0" healthy: "ok+0)}'
 ```
 
+**Through the proxy, from 14 Sep 2026.** Expect GoTrue's JSON with `[200]`,
+`websocket: 101 after 5.0…s` (fast means broken), and a `401` with
+`www-authenticate: Basic`, so `studio header lines: 2`.
+
+```
+date -u; curl -s -m 10 -w ' [%{http_code}]\n' -H "apikey: $(awk -F= '$1=="SUPABASE_PUBLISHABLE_KEY"{print(substr($0,index($0,"=")+1))}' /opt/supabase/stacks/growth/.env)" https://api.growth.lilbrahmas.org/auth/v1/health; curl -s -m 5 -o /dev/null -w 'websocket: %{http_code} after %{time_total}s\n' --http1.1 -H "apikey: $(awk -F= '$1=="SUPABASE_PUBLISHABLE_KEY"{print(substr($0,index($0,"=")+1))}' /opt/supabase/stacks/growth/.env)" -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' 'https://api.growth.lilbrahmas.org/realtime/v1/websocket?vsn=1.0.0'; curl -s -m 10 -o /dev/null -D - https://api.growth.lilbrahmas.org/ | awk 'NR==1||tolower($1)=="www-authenticate:"{n++;print}END{print("studio header lines: "n+0)}'
+```
+
+**Firewall against the newer copy.** `/root/growth-preproxy-iptables.txt` (99
+lines, 14 Sep 04:31 UTC) holds the rules with growth running. Expect
+`iptables changes since the preproxy copy: 0` and `growth listeners: 3 of 3`,
+all on `127.0.0.1`.
+
+```
+diff <(grep -v '^#' /root/growth-preproxy-iptables.txt | sed 's/\[[0-9]*:[0-9]*\]//') <(iptables-save | grep -v '^#' | sed 's/\[[0-9]*:[0-9]*\]//') | awk '/^[<>]/{n++;print}END{print("iptables changes since the preproxy copy: "n+0)}'; ss -tln | awk '$4~/:(8010|5442|6553)$/{n++;print($4)}END{print("growth listeners: "n+0" of 3")}'
+```
+
 Every `sed` in §6 matches the **full current value** (`=enroll$`, `=8000$`, …),
 not `=.*`. The match doubles as the verify-before-change: if a value is not what
 the comparison showed, that edit is a no-op and the check after it shows the old
 value instead of silently overwriting something unexpected.
+
+### Step 58, §8 and §9 — 14 Sep 2026
+
+Server time at the start: 04:26 UTC, well clear of `upcp`'s 00:46 window.
+
+| Step | What | Result |
+|---|---|---|
+| 58 | growth's entry inserted directly **under enroll's** by an exact-match `sed --in-place '/^enroll.=.instance.1:…$/a …'`, not the runbook's `>>`, which would have put it below the upstream-branch note | ✅ line 9 `enroll = instance 1: 8000 / 5432 / 6543`, line 10 `growth = instance 2: 8010 / 5442 / 6553`, then the blank line and the note. 14 → 15 lines |
+| fresh snapshot | the reusable host check below, unchanged, against the 13 Sep pre-start copy · growth health · today's `iptables-save` saved to `/root/growth-preproxy-iptables.txt` inside `(set -C && …)`, so a re-run cannot overwrite it | ✅ 04:31 UTC. coturn `MainPID` `1911360`, start `Wed 2026-08-26 00:46:34 UTC`, so `upcp` did not restart it. Missing `0`; relay `32768 49151`; `REDIRECT` `1`. Firewall `removed: 0 added: 25 added-not-on-growth-bridge: 3`, the 3 being the loopback `DROP` rules for 8010 / 5442 / 6553, so `upcp` changed nothing since the start. Networks `bridge,enroll_default,growth_default,host,none`; enroll `11 healthy: 11`, API `401`; growth `11 healthy: 11`. Saved copy 99 lines = 74 + 25 |
+
+The pasted command read `docker networkls` again yet printed the list: the same
+copy-only mangle as on 13 Sep.
+
+| Step | What | Result |
+|---|---|---|
+| Apache before | `apachectl configtest` · one `CODE` line per site from a single `curl` · `httpd.conf` include lines for both accounts · `ls -laR` of `ssl/2_4/` · enroll's include through `cat -A` and `sha256sum` | ✅ 04:39 UTC. `Syntax OK`. enroll `200`, api.enroll `401`, growth frontend **`200`**, not the `403` §4 expected. api.growth `404` because there is no proxy yet. `httpd.conf` is 1861 lines. api.enroll has an active `Include` (line 1088) **and** cPanel's commented hint (1099), because the hint stays after an include is activated. Enroll's frontend (902) and both growth vhosts (1277, 1545) have only the commented hint. `ssl/2_4/` holds only `enroll/`, root 755. Enroll's file is `supabase.conf`, root 644, 186 bytes, and exactly step 38's five lines: sha256 `9efe890f…04d05dd` equals a local `printf` of step 38 with `8000` |
+| `ensure_vhost_includes` | its source read, not run: `file -L`, then lines matching restart / dry / getoptions / `=item` | Perl, 365 lines. **It reloads Apache itself** through `Cpanel::HttpUtils::ApRestart::BgSafe::restart()` (line 363) whenever it updates a vhost, unless given `--no-restart` (line 356). `--skip-conf-rebuild` implies `--no-restart`. There is no dry-run option |
+
+**Runbook step 39 reloads every site before step 40 tests the config.** Run as
+written, `ensure_vhost_includes` rebuilds `httpd.conf` with the new include and
+reloads Apache in the background, so `apachectl configtest` comes after the
+reload it was meant to guard. Growth's order is therefore: syntax-test the file
+before it is installed, `ensure_vhost_includes --no-restart`, then
+`apachectl configtest && apachectl graceful`. The runbook itself still has the
+old order.
+
+| Step | What | Result |
+|---|---|---|
+| 38, staged | `sed 's\|127\.0\.0\.1:8000/\|127.0.0.1:8010/\|g'` on enroll's file into `/root/growth-api-supabase.conf`, `sha256sum`, `diff` against enroll's. Then `httpd -t`; `httpd -t -c 'Include /root/growth-no-such-file.conf'` as a control that must fail; `httpd -t -c 'Include /root/growth-api-supabase.conf'` | ✅ sha256 `78266462…a2ace3`, equal to a local `printf` of step 38 with `8010`. `diff` is exactly `3,4c3,4`, the two port lines. `Syntax OK`. The control failed as it must (`Syntax error in -C/-c directive: Could not open configuration file …`), which proves `-c` reads the file. The staged file: `Syntax OK` |
+| growth frontend `200` | `ls -la` of `public_html`, `<title>` of the page | No index file. The page is Apache's own **`Index of /`** listing of `public_html`: not cPanel's default page, not the app. `.well-known` there is owned by `growthlilbrahmas` |
+
+`-c` adds a directive after the live config is read, and `-t` parses without
+applying anything, so this tests the file before it goes near cPanel's include
+directory. The pasted command read `httpd-t` in its last clause, yet three
+results came back and no `command not found`: copy-only again.
+
+| Step | What | Result |
+|---|---|---|
+| 37–38 | `mkdir` twice, no `-p`, `&&` `cp` of the tested file `&&` `ls -laR` `&&` `sha256sum` | ✅ 04:50 UTC. `growthlilbrahmas/` and `api.growth.lilbrahmas.org/` are `drwxr-xr-x root root`; `supabase.conf` is `-rw-r--r-- root root 186`, like enroll's; sha256 `78266462…a2ace3` again. Inert until `httpd.conf` has an active `Include` and Apache reloads |
+| API docroot, for step 47 | `ls -laR` · `cmp` against the parent `.htaccess` · `cat -n` | Everything is owned by `growthlilbrahmas`; the docroot is `drwxr-x---`, group `nobody`. `.well-known/acme-challenge/` **already exists**, owned by `growthlilbrahmas`, empty, modified **02:57 UTC 14 Sep**. So something wrote and removed a file there overnight, most likely AutoSSL's daily run. The `.htaccess` is byte-identical to the parent's: cPanel's MultiPHP `error_log` / `log_errors` block and the `ea-php82` handler, **no rewrite directives** |
+
+Step 47 must therefore write only a probe **file** into the existing
+`acme-challenge/` and delete it. The runbook's `mkdir -p` run as root is harmless
+here only because the folder exists. On a fresh docroot it would create a
+root-owned folder that AutoSSL, writing as the account, cannot use.
+
+| Step | What | Result |
+|---|---|---|
+| 39, no reload | `(set -C && cat httpd.conf > /root/growth-preproxy-httpd.conf) && /scripts/ensure_vhost_includes --user=growthlilbrahmas --no-restart && diff …`, then growth's include lines, then api.growth's code after `sleep 10` | Include wired: active line 1267, api.growth's hint 1278, growth frontend's hint 1446 still commented. `api.growth now: 404` after 10 s, so `--no-restart` held and the running Apache still has the old config. **The `diff` was not one line.** 1861 → 1862 lines, but cPanel re-emitted growth's four vhost blocks with api.growth's first, and growth's SSL `ServerAlias` has its nine names in a different order. Every hunk is inside growth's section (old lines 1115–1549; enroll's lines end at 1099). Checked before any reload, below |
+| `.htaccess` | `printf` append `&&` exact-line count `&&` `ls -la` `&&` api.growth's code | ✅ 04:59 UTC. `RewriteEngine Off lines: 1 of 24`; `-rw-r--r-- growthlilbrahmas growthlilbrahmas 1029` (908 + 121); `404`, so the file parses. A broken `.htaccess` would give `500` |
+
+Rollback for the `.htaccess` line: delete the last three lines (blank, comment,
+`RewriteEngine Off`); the other 21 are byte-identical to `public_html/.htaccess`.
+
+| Step | What | Result |
+|---|---|---|
+| 39, checked | One `awk` over both files: each site's block keyed by `<VirtualHost>` address + `ServerName` and compared in order, with `ServerAlias` words sorted, and the new include skipped and counted only inside api.growth's `:443` block. Tested locally first on a mock `httpd.conf`, which accepted the swap and flagged each of six planted faults: a changed enroll line, a reordered directive, an include added to the frontend, a renamed alias, a removed global line, the include in the wrong site. Then `httpd -S` on the old copy (`-f`) and on the new file, default servers only | ✅ `site blocks compared: 18 differing: 0 new api.growth include lines: 1`. Default servers unchanged: `104.122.168.184.host.secureserver.net` at 328 and 307, `turn.lilbrahmas.org` at 618, and the hostname again at 1667 → 1668, one line later because it sits after growth's section. None is a growth site |
+
+**`ensure_vhost_includes` re-emits the account's vhost blocks, and not
+necessarily in the same order.** A plain `diff` of `httpd.conf` then shows
+hundreds of changed lines for a one-line change, and reading it by eye proves
+nothing. The per-site comparison is what separates reordering from change. Order
+between vhosts with distinct names matters only for which one is an address's
+default, and `httpd -S` shows that.
+
+The check, as run (old copy first, new file second):
+
+```
+awk 'FNR==1{f++;k="GLOBAL";h=""}/^[[:space:]]*<VirtualHost/{h=$2;k=h;next}/^[[:space:]]*<\/VirtualHost>/{k="GLOBAL";next}/^[[:space:]]*ServerName/{k=h"|"$2}$1=="ServerAlias"{n=split($0,w);asort(w);s="";for(j=1;j<=n;j++)s=s" "w[j];$0=s}f==2&&k~/:443.*\|api\.growth\.lilbrahmas\.org$/&&/^[[:space:]]*Include.*userdata\/ssl\/2_4\/growthlilbrahmas\/api\.growth\.lilbrahmas\.org\//{inc++;next}{b[f,k]=b[f,k]"\n"$0;K[k]=1}END{for(k in K)if(b[1,k]!=b[2,k]){d++;print("DIFFERS "k)}print("site blocks compared: "length(K)" differing: "d+0" new api.growth include lines: "inc+0)}' /root/growth-preproxy-httpd.conf /etc/apache2/conf/httpd.conf
+```
+
+It does not check *where* inside api.growth's block the include sits; the plain
+`diff` showed that: `1266a1267`, 11 lines above its commented hint, the same
+spacing as enroll's 1088 / 1099.
+
+| Step | What | Result |
+|---|---|---|
+| pending changes | `systemctl show httpd --property=ExecMainStartTimestamp`, the last `resuming normal operations` in `error_log`, files under `/etc/apache2` changed since 13 Sep 00:00 | Apache started `Thu 2026-09-10 00:46:22 UTC`. 79 reloads in the log, **the last at Sat 12 Sep 13:03:17** (`Apache/2.4.68 (cPanel) OpenSSL/3.5.5`), so neither night's `upcp` reloaded it. Changed since 13 Sep: only ours, `supabase.conf` at 04:50 and `httpd.conf` + `httpd.conf.datastore` at 04:58 (the datastore is cPanel's cache, written by the same `ensure_vhost_includes` run). The window from 12 Sep 13:03 to 13 Sep 00:00 was not covered, so the reload command gates on it itself |
+
+**A reload applies everything on disk, not just the change in hand.** Apache had
+not reloaded since 12 Sep, so anything cPanel wrote after that would have gone
+live with growth's proxy and looked like its fault. The reload is therefore
+gated on the full list of Apache config and certificate files changed since the
+last reload being exactly the three above.
+
+| Step | What | Result |
+|---|---|---|
+| 40–41 | one chain: `find /etc/apache2 /var/cpanel/ssl/apache_tls -type f -newermt '2026-09-12 13:03:17'` must be exactly the three files (an `awk` gate that also closes on empty output; tested locally on four cases) `&&` `apachectl configtest` `&&` `apachectl graceful` `&&` `sleep 5` `&&` one `CODE` line per site | ✅ `changed since last reload: ours 3 of 3, other 0`, `Syntax OK`, graceful ran. enroll `200`, api.enroll `401`, growth frontend `200`, all as before. api.growth **`404 → 401`**: the proxy is live, and Envoy refuses a request without a key |
+| 42 | active `Include` for api.growth in `httpd.conf` | ✅ already shown at step 39: line 1267 |
+
+The pasted command read `&&apachectl`; bash parses `&&` the same with or
+without the space.
+
+| Step | What | Result |
+|---|---|---|
+| 45 | GoTrue health through the proxy, with growth's publishable key read from `.env` straight into the header by `awk -F= '$1=="SUPABASE_PUBLISHABLE_KEY"{…}'` | ✅ 05:19 UTC. `{"version":"v2.189.0","name":"GoTrue",…} [200]`. Without a key the same URL gave `401` at step 41 |
+| 46 | WebSocket upgrade, `--http1.1`, `-m 5` | ✅ `websocket: 101 after 5.001073s`: upgraded, then held open until the time limit |
+| Studio | response headers of `https://api.growth.lilbrahmas.org/` | ✅ `HTTP/2 401` with `www-authenticate: Basic realm="http://api.growth.lilbrahmas.org/"`: the now-public dashboard asks for its login |
+| 47 | probe file written into the existing `acme-challenge/`, fetched over HTTP with `-L` and over HTTPS, deleted, folder listed | ✅ `probe-growth-api-14sep [200]` both ways. The HTTP fetch stayed on `http://`, so port 80 does not redirect this path. The HTTPS fetch is the one that exercises `ProxyPass /.well-known/ !`, and it served the file rather than Envoy's `Unauthorized`. Afterwards `acme-challenge/` held only `.` and `..`, still owned by `growthlilbrahmas` |
+| 50–55 | the reusable host check, unchanged | ✅ 05:19 UTC, identical to the 04:31 snapshot: coturn `1911360` since `2026-08-26 00:46:34`, missing `0`, relay `32768 49151`, `REDIRECT 1`, `removed: 0 added: 25 added-not-on-growth-bridge: 3` with the three loopback `DROP` lines, networks unchanged, enroll `11 healthy: 11`, API `401` |
+| 43–44 + firewall | growth health · `diff` against `/root/growth-preproxy-iptables.txt` · `ss -tln` for 8010 / 5442 / 6553 | ✅ growth `11 healthy: 11`; `iptables changes since the preproxy copy: 0`; `growth listeners: 3 of 3`, exactly `127.0.0.1:8010`, `127.0.0.1:5442`, `127.0.0.1:6553` |
+| 48 | frontend `200` | not a pass: the `200` is Apache's `Index of /`, not the app. Open until the app is served |
+| 49 | RLS audit | not applicable to an empty database; it belongs after the migrations |
+
+**Runbook §8 and §9 are complete for growth, 14 Sep 2026.**
+`https://api.growth.lilbrahmas.org` serves growth's stack: empty database,
+signups disabled, Studio behind basic auth. enroll, coturn and growth's frontend
+answer exactly as they did before the reload.
+
+Files left in `/root` on purpose: `growth-preproxy-iptables.txt` (the firewall
+baseline from here on), `growth-preproxy-httpd.conf` (the config before step 39)
+and `growth-api-supabase.conf` (the tested copy of the include).
+
+#### Rolling §8 back
+
+Not tested. **Do not follow runbook §10's order**, which removes `supabase.conf`
+first. The active `Include ".../api.growth.lilbrahmas.org/*.conf"` would then
+match no file, which Apache 2.4 documents as an error for `Include` (unlike
+`IncludeOptional`). `configtest` would fail, `graceful` would be refused, and a
+full restart or reboot would leave Apache down. An order that never leaves a
+broken config on disk:
+
+1. Empty the include to a comment, then reload. The proxy is off and the glob
+   still matches.
+
+   ```
+   printf '%s\n' '# growth proxy rolled back' > /etc/apache2/conf.d/userdata/ssl/2_4/growthlilbrahmas/api.growth.lilbrahmas.org/supabase.conf && apachectl configtest && apachectl graceful
+   ```
+
+2. Later, un-wire it: remove the file and both directories, let
+   `ensure_vhost_includes --user=growthlilbrahmas --no-restart` comment the
+   `Include` out again, then `apachectl configtest && apachectl graceful`, all in
+   one chain so the broken window lasts seconds with no reload inside it.
+
+The `.htaccess` line can stay: it affects nothing but `/.well-known/`.
+
+#### Runbook corrections found on 14 Sep
+
+Not yet applied to `supabase-adding-instance-runbook.md`:
+
+1. **Step 39 reloads Apache before step 40 tests the config.**
+   `ensure_vhost_includes` restarts Apache itself unless given `--no-restart`.
+2. **Step 38 does not test the file before it is live.**
+   `httpd -t -c 'Include <file>'` parses it on top of the running config, with a
+   missing-file control proving that `-c` reads the file.
+3. **A plain `diff` of `httpd.conf` cannot review step 39**: cPanel re-emits the
+   account's vhost blocks in a new order. Use the per-site comparison, and
+   `httpd -S` for default servers.
+4. **A reload applies everything on disk.** Gate step 41 on the files changed
+   since the last `resuming normal operations` being only this instance's.
+5. **Step 47's `mkdir -p`, run as root, creates a root-owned `acme-challenge/`**
+   on a fresh docroot, which AutoSSL, writing as the account, cannot use. Write
+   only a file into the account-owned folder.
+6. **Step 47 over plain HTTP does not test `ProxyPass /.well-known/ !`** when
+   port 80 does not redirect, as here, because the include is on the SSL vhost
+   only. Fetch over HTTPS as well.
+7. **Step 48's `200` can come from Apache's directory listing** of an empty
+   docroot. Check content, not the code.
+8. **Step 58's `>>` lands below the upstream-branch note** in
+   `/opt/supabase/README.md`. Insert under the last instance line instead.
+9. **§10 removes the include before un-wiring it.** See *Rolling §8 back*.
 
 ---
 
@@ -627,3 +812,7 @@ value instead of silently overwriting something unexpected.
    sets `ssr: false`, so all 111 authenticated routes render client-side. The
    process exists for **server functions**, not rendering — so a healthcheck must
    call a server function, not just fetch `/`.
+7. **Until the app is served, `https://growth.lilbrahmas.org/` is a public
+   directory listing** of `public_html` (Apache's `Index of /`, `200`; seen
+   14 Sep 2026). The app's own `ProxyPass /` will replace it. Until then, a `200`
+   there is no evidence of anything.
