@@ -786,6 +786,9 @@ numbers below are the runbook's numbers from before that change.
 
 ## 5. Still open
 
+These are scheduled as steps in `README.md` under *Remaining steps*. The notes
+here are the detail behind them.
+
 1. **Nitro preset** — the gate on everything container-shaped. Not in the repo at
    all; it comes from `@lovable.dev/vite-tanstack-config@2.13.1`, whose own
    comment says *"nitro (build-only using cloudflare as a default target)"*. A

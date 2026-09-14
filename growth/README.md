@@ -1,6 +1,6 @@
 # growth.lilbrahmas.org — deploy kit
 
-**Status: git, DNS, cPanel and SSL are done. The Supabase stack is complete: running, isolated from enroll, registered as instance 2, and public at https://api.growth.lilbrahmas.org since 14 Sep 2026. Its database is empty. Serving the app is not designed yet.**
+**Status: git, DNS, cPanel and SSL are done. The Supabase stack is complete: running, isolated from enroll, registered as instance 2, and public at https://api.growth.lilbrahmas.org since 14 Sep 2026. Its database is empty. Serving the app is not designed yet.** The rest is eleven steps, one conversation each: see *Remaining steps*.
 
 This folder is the deploy kit for the second app on the VPS. It is deliberately
 thin right now — most of enroll's documents are records of a migration that has
@@ -30,7 +30,7 @@ written when the work it describes actually happens.
 | ✅ **SSL** | one Let's Encrypt SAN cert covers both hostnames, valid to 11 Dec 2026 |
 | ✅ **Supabase stack** | running since ~07:05 UTC 13 Sep 2026 at `/opt/supabase/stacks/growth`: 11/11 healthy, ports 8010 / 5442 / 6553 on loopback only, keys and tokens proven isolated from enroll, enroll and coturn verified undisturbed. Empty database — no migrations applied. Registered as `growth = instance 2` in `/opt/supabase/README.md`. **Public since 14 Sep 2026** at `https://api.growth.lilbrahmas.org` through Apache (runbook §8–§9 verified): GoTrue, WebSocket and the ACME renewal path work through the proxy, Studio asks for its basic-auth login, and enroll and coturn were verified undisturbed |
 | 🟡 **`.env.production.local`** | no longer blocked on the stack — growth's publishable key now exists in the stack `.env`. Where the app's runtime variables live is still part of the open serving design |
-| ❌ **Serving** | design not started. See *The finding that changed the plan*. |
+| ❌ **Serving** | design not started. See *The finding that changed the plan*, and steps 1, 6 and 7 of *Remaining steps*. |
 
 ---
 
@@ -170,14 +170,22 @@ served directly by Apache.
    handled — stack `.env` is mode 600 for this reason. Note these are read from
    `process.env` at runtime, not baked at build time like enroll's `VITE_*`.
 4. ~~`pg_cron` / `pg_net`~~ — **resolved, not required.** See above.
+5. **Whether to enable `pg_cron` anyway.** Nothing needs it, but without it the
+   two SQL jobs in `20260722071430_*` never run, and nothing reports that. The
+   migration schedules them only if the extension already exists, so this has to
+   be decided before the migrations are applied.
+6. **Whether `LOVABLE_API_KEY` works off Lovable.** Ask-AI and AI training call
+   Lovable's gateway from the server at runtime.
+
+Step 1 of *Remaining steps* answers all of these.
 
 ---
 
 ## Next step
 
-**The Supabase stack is finished as of 14 Sep 2026.** Next comes the serving
-design, starting with the open questions above, and after it growth's 226
-migrations. Neither has started.
+**The Supabase stack is finished as of 14 Sep 2026.** Next is step 1 of
+*Remaining steps* below: the serving design decisions. Nothing on the app side
+has started.
 
 **The baseline below was captured on 12 Sep 2026** — recorded values are in
 `STACK-PROVISIONING.md` §2, which also explains why the raw coturn capture is
@@ -195,6 +203,200 @@ The capture commands that used to sit here were removed on purpose: they
 **overwrite** the baseline files they write to, so re-running them "at the end"
 destroys the thing being compared against — and the enroll health check among
 them (`grep -vc healthy`) passes on unhealthy or exited containers.
+
+---
+
+## Remaining steps — one conversation each
+
+Each step is done in its own conversation. Start it with the brief under
+*Starting a step conversation*. A step is finished when its **Done when** is true
+and recorded: in this README's status table, and in the step's own record
+(`STACK-PROVISIONING.md`, or the `MIGRATION-RECORD.md` and `OPERATIONS.md` that
+steps 2 and 6 start).
+
+| # | Step | Needs | Where the work happens |
+|---|---|---|---|
+| 1 | Serving design decisions | — | workstation, Lovable |
+| 2 | Data route and migration scope | — | Lovable Cloud, read-only |
+| 3 | Restrict Studio | — | server, Apache |
+| 4 | Apply the migrations | 1, 2 | server |
+| 5 | Rehearsal data import | 2, 3, 4 | server |
+| 6 | `deploy-growth` and the app container | 1, 4 | server |
+| 7 | Apache proxy for growth.lilbrahmas.org | 6 | server, Apache |
+| 8 | Postgres backups | 4 | server |
+| 9 | SMTP | — | server, mail provider |
+| 10 | Cutover | 5–9 | server, Lovable |
+| 11 | Monitoring and a reboot test | 6 | server |
+
+Two items sit earlier than the work they relate to. The `pg_cron` decision is in
+step 1 because the migrations only schedule its jobs if the extension already
+exists. Studio is restricted in step 3 because the rehearsal import in step 5
+puts real HR data on the box.
+
+### 1. Serving design decisions
+
+Settle what gets built. Answers every item under *Open questions*.
+
+- Prove the Nitro build can target `bun` instead of Cloudflare: install and build
+  in `D:\laragon\www\growth.lilbrahmas` with the preset overridden, and check that
+  `.output/server/index.mjs` appears. If only a `vite.config.ts` edit works, that
+  change goes through Lovable.
+- Sign off port 3010, re-checked free.
+- Where the four runtime variables live, and whether the browser bundle also
+  bakes in `VITE_*` values.
+- Whether `LOVABLE_API_KEY` works off Lovable.
+- Whether to enable `pg_cron`.
+
+**Done when** each open question has a recorded answer.
+
+### 2. Data route and migration scope
+
+Know what moves and how, before anything is imported. Writes nothing anywhere.
+
+- Find a read route out of Lovable Cloud `hwchtywjbmcvpucidfmy`: direct Postgres,
+  then the service-role key, then the publishable key (enroll `00-PLAN.md`
+  Phase 0.2). Most HR data sits behind RLS, so the publishable key alone is
+  unlikely to reach it.
+- Row counts per table, the number of auth users, storage buckets and object
+  counts.
+- Re-count the migrations at HEAD; there were 226 when last checked.
+
+**Done when** the route and the scope table are recorded in a new
+`MIGRATION-RECORD.md`.
+
+### 3. Restrict Studio
+
+Studio at `https://api.growth.lilbrahmas.org/` is a full database admin UI behind
+basic auth only. enroll has the same exposure.
+
+- An address allow-list at Apache that restricts Studio while keeping the API
+  paths (`/auth/v1/`, `/rest/v1/`, `/realtime/v1/`, `/storage/v1/`, …) public.
+
+**Done when** Studio refuses a request from an address not on the list, and
+steps 45–47 of the adding-instance runbook still pass.
+
+### 4. Apply the migrations
+
+Growth's schema on its stack, with a ledger. **Needs** 1 (the `pg_cron` decision)
+and 2 (the migration count).
+
+- Reuse enroll's apply logic: a ledger, `ON_ERROR_STOP`, refusal to run against a
+  non-empty `public`. enroll's `.applied-migrations` must not be imported
+  (`STACK-PROVISIONING.md` §3.3).
+- Compare the resulting schema with `types.ts`, then run the RLS and GRANT audits
+  (enroll `OPERATIONS.md` §3).
+
+**Done when** every migration is in the ledger, the schema matches `types.ts`, and
+both audits pass or their exceptions are written down.
+
+### 5. Rehearsal data import
+
+Prove the import end to end on a copy. Cutover repeats it for real. **Needs** 2, 3
+and 4.
+
+- Users before data, keeping their original IDs (enroll `00-PLAN.md` Phase 2).
+  Inserting users fires `on_auth_user_created_dev_roles`, which creates `profiles`
+  rows and `trainee` roles that the imported data would duplicate.
+- Tables parents first, by the foreign-key graph, IDs kept (enroll
+  `MIGRATION-RECORD.md` §5). Storage objects too, if step 2 found any.
+- Signups in both directions: public signup refused, admin-created users still
+  work (`STACK-PROVISIONING.md` §3.7, never tested).
+
+**Done when** row counts match step 2's scope and the import is a repeatable
+script.
+
+### 6. `deploy-growth` and the app container
+
+The app running on the VPS. **Needs** 1 and 4.
+
+- The script: git guards from enroll's `deploy.sh`, `bun install
+  --frozen-lockfile` (two lockfiles exist), build.
+- A container bound to `127.0.0.1:3010`, with a restart policy from the start and
+  a healthcheck that calls a server function rather than fetching `/`.
+- The runtime variables wired as step 1 decided. The service-role key never
+  leaves the box.
+
+**Done when** the container comes back healthy after a restart, and a new
+`OPERATIONS.md` describes deploying.
+
+### 7. Apache proxy for growth.lilbrahmas.org
+
+The frontend hostname serves the app. **Needs** 6.
+
+- The adding-instance runbook's §8 procedure, steps 38a–41, with
+  `ProxyPass /.well-known/ !` first: one certificate covers both hostnames.
+- Block `/api/public/hooks/` from outside, and call the two hook routes from a
+  host cron job over loopback (`STACK-PROVISIONING.md` §3.5).
+
+**Done when** runbook step 48 shows the app's page title and the ACME probe passes
+on both hostnames.
+
+### 8. Postgres backups
+
+A copy of the database that survives the box. **Needs** 4; **before** 10.
+
+- A scheduled `pg_dump` through `docker compose exec -T db`, stored outside
+  `/home`, with retention.
+
+**Done when** the latest dump restores into a scratch database.
+
+### 9. SMTP
+
+Password reset works. **Before** 10.
+
+- A real mail provider in the stack's `SMTP_*` settings.
+
+**Done when** a reset email arrives and its link signs the user in.
+
+### 10. Cutover
+
+Users on growth.lilbrahmas.org instead of learniverse-hub-442.lovable.app.
+**Needs** 5–9.
+
+- Freeze changes in the Lovable-hosted app, clear the rehearsal data, repeat
+  step 5 as the final copy, then move users over.
+- From outside, with the publishable key taken from the deployed app: protected
+  tables return `[]`, and the built app holds no trace of the Lovable project ID.
+
+**Done when** users work on the VPS and nothing writes to Lovable Cloud any more.
+
+### 11. Monitoring and a reboot test
+
+A stopped app or an expiring certificate gets noticed. **Needs** 6; before or
+right after 10.
+
+- Alerts for a stopped process and for certificate expiry.
+- A reboot test with the app container in the boot path.
+
+**Done when** each alert has fired once on purpose, and every service is back
+after a reboot.
+
+### Starting a step conversation
+
+Open with this, filling in the step number:
+
+> Read growth/README.md and growth/STACK-PROVISIONING.md, then do step N of
+> *Remaining steps*. Constraints that are load-bearing, not stylistic:
+>
+> - Root SSH is disabled. I run every command in WHM → Terminal and paste the
+>   output back.
+> - Every command is one line with literal values, never shell variables. The
+>   terminal drops spaces and glues output lines, so a mangled command must error
+>   or look wrong, never look like a pass.
+> - Never let a secret reach the screen.
+> - Health checks use `docker compose ps -a`, match the literal `(healthy)` and
+>   print the total.
+> - Do not disturb coturn or enroll. Verify with the reusable checks in
+>   STACK-PROVISIONING.md §4.
+> - Apache config only in cPanel's include directory; `apachectl configtest`
+>   before `apachectl graceful`, and the reload affects every site.
+> - Avoid working across 00:46 UTC (cPanel upcp). If the last snapshot is from an
+>   earlier UTC day, take a fresh one before changing anything.
+> - Changes to the growth app go through Lovable. Don't edit the app repo.
+> - I'm a Laravel dev, not devops. One step at a time, the mechanism before the
+>   command, verify the current state before changing it, short responses.
+> - Update README.md and the step's record as work completes. Don't commit
+>   unless I ask.
 
 ---
 
