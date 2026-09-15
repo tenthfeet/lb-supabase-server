@@ -21,6 +21,10 @@ so re-count rather than trust these numbers.
 | Migrations | 249 | **263**, latest `20260914200900_*` |
 | `types.ts` (`enroll/schema-fingerprint.sh`) | 167 tables, 2131 columns, 76 functions | **180 tables, 2294 columns, 77 functions** |
 
+Later on 15 Sep, `df414acf` (08:11 UTC) added one migration, the escalation fix
+in *`pg_cron` and `pg_net`* below. That makes **264**, and `types.ts` did not
+change.
+
 **No table drift between the repo and Lovable Cloud** (15 Sep, §3). Lovable's
 own migration ledger holds **263** entries and its latest is `20260914200900`,
 the same file the repo ends with. The database's 180 `public` tables are exactly
@@ -52,7 +56,7 @@ The source's jobs, from query 2 (§3). Times are the database's, UTC.
 | jobid | Job | Schedule | Runs | Created by | Last run |
 |---|---|---|---|---|---|
 | 1 | `dwr-shift-cutoff-nudge` | `*/15 * * * *` | HTTP to `lovable.app` | **no migration.** A grep of `supabase/` and `src/` for the name finds nothing | succeeded 07:30 15 Sep |
-| 2 | `escalate-stale-approvals` | `15 * * * *` | SQL `public.escalate_stale_approvals()` | `20260722071430_*`, guarded | **failed** 07:15 15 Sep |
+| 2 | `escalate-stale-approvals` | `15 * * * *` | SQL `public.escalate_stale_approvals()` | `20260722071430_*`, guarded; function fixed by `20260915081117_*` | failed through 07:15 15 Sep, **succeeded** 08:15 after the fix |
 | 3 | `auto-generate-leave-delegations` | `30 0 * * *` | SQL `public.auto_generate_leave_delegations()` | `20260722071430_*`, guarded | succeeded 00:30 15 Sep |
 | 5 | `renew-monthly-incentive-plans` | `35 0 * * *` | SQL | `20260914051218_*` / `20260914051303_*`, unguarded | succeeded 00:35 15 Sep |
 | 6 | `attendance-roll-day` | `15 19 * * *` (00:45 IST) | HTTP to `lovable.app` | `20260914120009_*`, unguarded | succeeded 19:15 14 Sep |
@@ -93,9 +97,27 @@ Lovable Cloud. It calls `project--f44cdfc8-….lovable.app/api/public/hooks/dwr-
   loop reads `user_id` from `change_requests`, whose columns are `requested_by`
   and `target_user_id`. PL/pgSQL checks a query only when it runs, so the
   migration applied without error. The error aborts the whole call, so the leave
-  escalations from its first loop roll back too. The repo has the same bug, so it
-  fails the same way on the VPS. That is for the app's owner to fix through
-  Lovable, not for this migration.
+  escalations from its first loop roll back too.
+  **Fixed by Lovable on 15 Sep 2026** in `20260915081117_*` (`df414acf`,
+  08:11 UTC), at our request:
+  - a single `CREATE OR REPLACE FUNCTION`, with no cron job, table or grant
+    touched; `CREATE OR REPLACE` keeps the `REVOKE` from `20260722085106_*`
+  - `change_requests` now gives `COALESCE(target_user_id, requested_by)`
+  - a `NOT EXISTS` check on `approval_history` flags each item once. Before the
+    fix, once it worked, it would have added a row per stale item every hour
+  - every other column it reads exists in `types.ts`
+
+  ✅ **Confirmed working, 15 Sep 2026**, by a read-only query
+  (`query-results-export-2026-09-15_13-47-34.csv`):
+  - the live definition contains the `COALESCE`
+  - runs: 07:15 `failed`, then 08:15 `succeeded`, the first after the fix
+  - since 08:11 UTC: **108** `sla_breach_flagged` rows and no `sla_escalated`
+    rows, so no leave request changed approver
+  - **0** items flagged more than once
+
+  That first success flagged every item already pending over 48 hours, so
+  `approval_history` is now about 587 rows, past §3's 479. The 108 is itself a
+  finding for the app's owner: that many approvals have waited over two days.
 - **Step 4:** check `pg_net` on growth's stack, then unschedule or repoint
   `attendance-roll-day`. Drive both hooks from a host cron over loopback
   (`STACK-PROVISIONING.md` §3.5), so `dwr-nudge` keeps running.
@@ -437,8 +459,9 @@ the import: the workstation's, the one under `/home`, and the server's.
 
 ### Found on the way, for the app's owner (through Lovable)
 
-- `escalate-stale-approvals` fails every hour: `change_requests` has no
-  `user_id` (§1).
+- `escalate-stale-approvals` failed every hour, because `change_requests` has no
+  `user_id`. ✅ **Fixed by Lovable on 15 Sep** in `20260915081117_*`, and
+  confirmed by the 08:15 UTC run: 108 stale approvals flagged once each (§1).
 - All 30 `employee_documents` rows point at files that do not exist (§3).
 - `dwr-shift-cutoff-nudge` exists only in the database, not in any migration
   (§1).

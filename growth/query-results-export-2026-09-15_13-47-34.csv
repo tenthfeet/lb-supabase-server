@@ -1,0 +1,6 @@
+detail;kind;n;name
+true;0 function;;fixed definition live
+failed;1 run;;2026-09-15 07:15
+succeeded;1 run;;2026-09-15 08:15
+;2 history since fix;108;sla_breach_flagged
+;3 flagged more than once;0;items

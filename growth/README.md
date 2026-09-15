@@ -335,9 +335,11 @@ Lovable's ledger, and its `types.ts` matches the tables name for name. All 40 us
 editor can read. Lovable's Export leaves passwords out. Five `pg_cron` jobs run
 in the source. Two call the Lovable-hosted app, and one of those is not in any
 migration (see *Two things to know*). All 30 `employee_documents` rows point at
-files that do not exist, in production today. `escalate-stale-approvals` has failed 168 of 168 runs in
-7 days on a bug in its own function (`change_requests` has no `user_id`), so it
-will fail on the VPS too. A JSON copy of everything is ~9.7 MB. Left: choose the
+files that do not exist, in production today. `escalate-stale-approvals` had failed 168 of 168 runs in
+7 days on a bug in its own function (`change_requests` has no `user_id`). Lovable
+fixed it on 15 Sep in migration `20260915081117_*`, which makes **264**
+migrations. Confirmed working by its 08:15 UTC run, which flagged 108 stale
+approvals once each. A JSON copy of everything is ~9.7 MB. Left: choose the
 copy route. See `MIGRATION-RECORD.md`.
 
 ### 3. Restrict Studio
