@@ -25,7 +25,7 @@ happens; what is written here has been run and verified unless marked otherwise.
 | ✅ SSL issued | Let's Encrypt, `ssl_verify=0` on both, valid to **11 Dec 2026** |
 | ✅ Stack | running at `/opt/supabase/stacks/growth` since ~07:05 UTC 13 Sep 2026 — 11/11 healthy, ports on loopback only, keys and tokens proven isolated from enroll, enroll and coturn verified undisturbed. See §4. Empty database, no migrations applied |
 | ✅ Apache reverse proxy | `https://api.growth.lilbrahmas.org` → `127.0.0.1:8010` since 14 Sep 2026. Verified through the proxy at 05:19 UTC: GoTrue `200` with the key, WebSocket `101` after 5 s, ACME probe `200` over HTTP and HTTPS, Studio `401` asking for basic auth. enroll and coturn verified undisturbed. See §4 |
-| ❌ Serving design for the app | still open — see `README.md` |
+| ✅ Serving design for the app | decided 14 Sep 2026 (README step 1) — see `README.md` *Open questions*; evidence in §5 |
 
 ### The `.com` mistake, for the record
 
@@ -183,6 +183,26 @@ So no extension work, and no callback URL. What remains is smaller and different
 those two SQL jobs will silently never run unless `pg_cron` is deliberately
 enabled, and nothing will report that they aren't running.
 
+**Superseded 14 Sep 2026, HEAD `4dc6623`, 246 migrations.** `20260914051218_*`
+(line 195) and `20260914051303_*` (line 78) each run an **unguarded** `DO` block:
+`SELECT jobid … FROM cron.job`, then `cron.schedule('renew-monthly-incentive-plans',
+'35 0 * * *', …)`. Without the extension that is `relation "cron.job" does not
+exist`, so the migrations cannot apply unless `pg_cron` is created first. They
+passed on Lovable Cloud, which means `pg_cron` is enabled there and all three jobs
+run in production today. Still zero `CREATE EXTENSION` and zero `pg_net`.
+
+**Growth's database, 14 Sep 2026 07:16 UTC:** `preload has pg_cron: true`,
+`pg_cron available versions: 7`, `pg_cron installed: 0`,
+`cron.database_name: postgres`. The image already preloads the library and
+points it at the app's database, so enabling it is `CREATE EXTENSION` alone: no
+config change, no Postgres restart.
+
+**Superseded again 15 Sep 2026, HEAD `63b7ca15`, 263 migrations.**
+`20260914120009_*` schedules `attendance-roll-day` as a `net.http_post` to the
+Lovable-hosted app. `pg_net` is now referenced, though only inside a stored job
+command, so it is not needed to apply the migration. See
+`MIGRATION-RECORD.md` §1.
+
 ### 3.5 The two hook routes are orphans, and effectively public
 
 `src/routes/api/public/hooks/attendance-roll-day.ts` and `dwr-nudge.ts` carry
@@ -204,6 +224,16 @@ auth middleware.
 **Recommended shape:** block `/api/public/hooks/` at Apache from outside and
 drive them from a host cron over loopback. No extension needed, no database→app
 HTTP path, and failures land in a cron log rather than nowhere.
+
+**15 Sep 2026: `attendance-roll-day` is no longer an orphan.** Lovable Cloud's
+`pg_cron` calls it daily over HTTP at its `lovable.app` URL
+(`MIGRATION-RECORD.md` §1). A fifth job, `dwr-shift-cutoff-nudge`, created
+in Lovable Cloud without any migration, calls a `lovable.app` URL every 15
+minutes, at `/api/public/hooks/dwr-nudge` (confirmed 15 Sep). So neither
+route is an orphan in production. The code comments were right, but the
+migrations show only one of the two callers. The recommended shape above is
+unchanged, and it now also replaces a job that replaying the migrations would
+lose.
 
 ### 3.6 Runbook §5 on a *copied* `.env`
 
@@ -789,6 +819,9 @@ numbers below are the runbook's numbers from before that change.
 These are scheduled as steps in `README.md` under *Remaining steps*. The notes
 here are the detail behind them.
 
+**Answered by step 1 on 14 Sep 2026.** The decisions are recorded in `README.md`
+*Open questions*; what follows is the evidence they rest on.
+
 1. **Nitro preset** — the gate on everything container-shaped. Not in the repo at
    all; it comes from `@lovable.dev/vite-tanstack-config@2.13.1`, whose own
    comment says *"nitro (build-only using cloudflare as a default target)"*. A
@@ -798,6 +831,21 @@ here are the detail behind them.
    that file and `deploy.sh` refuses a dirty checkout. **Answerable entirely off
    the server:** install deps in `D:\laragon\www\growth.lilbrahmas`, build with
    the preset overridden, check whether `.output/server/index.mjs` appears.
+
+   **Proven 14 Sep 2026 — the environment variable is enough.** Working copy
+   at `4dc6623`, equal to GitHub `main`. The wrapper's `dist/index.js` sets only
+   `defaultPreset: "cloudflare-module"`; it deletes `NITRO_PRESET` /
+   `SERVER_PRESET` only inside Lovable's sandbox (`LOVABLE_SANDBOX=1` or
+   `DEV_SERVER__PROJECT_PATH` set). Built with bun 1.4.2 on Windows:
+   `NITRO_PRESET=bun bun --bun run build`, exit 0. `.output/server/index.mjs`
+   alone proves nothing — `cloudflare-module` writes the same filename — so the
+   evidence is `.output/nitro.json` → `"preset": "bun"`, `"preview": "bun run
+   ./server/index.mjs"`, no `wrangler*` file anywhere. Run from a folder with no
+   `.env` as `NITRO_HOST=127.0.0.1 NITRO_PORT=3999 bun .output/server/index.mjs`:
+   `Listening on: http://127.0.0.1:3999/`, only on loopback; a static asset
+   `200`; `POST /api/public/hooks/dwr-nudge` without a key → the route's own
+   `Unauthorized [401]`, so server routes run in the bun process. Stopped, port
+   released. The runtime reads `NITRO_PORT`/`PORT` and `NITRO_HOST`/`HOST`.
 2. **Target the `bun` preset, not `node-server`.** Lovable's toolchain is bun
    (`bunfig.toml`, `bun.lock` kept current) and **this server has no Node** —
    enroll already builds in `oven/bun:1-alpine`. The bun preset lets one image
@@ -807,12 +855,47 @@ here are the detail behind them.
 3. **Two lockfiles are present** — `bun.lock` (220 KB) and `package-lock.json`
    (320 KB), same timestamp. They can resolve differently. Pin the build to bun
    with `--frozen-lockfile`, as enroll's deploy already does.
+   14 Sep 2026: `bun install --frozen-lockfile` → 553 packages, `bun.lock`
+   sha256 identical before and after.
+
+   **The build regenerates `src/routeTree.gen.ts`.** Locally it showed as
+   modified: the committed blob is LF, the Windows checkout (`core.autocrlf=true`)
+   is CRLF, the build writes LF. Content identical ignoring CR; restored with
+   `git checkout --`, status clean. On Linux the checkout is LF, so it matches —
+   but if Lovable ever pushes a stale `routeTree.gen.ts`, `deploy-growth`'s
+   dirty-checkout guard trips *after* the build. The guard must run before it.
 4. **App server port 3010** — verified free. Below 32768, clear of the Supabase
-   bands and cPanel's 2082–2096.
+   bands and cPanel's 2082–2096. **Re-checked 14 Sep 2026 07:16 UTC:**
+   `sockets seen: 68 listening on 3010: 0`; `apache files scanned: 3` (`httpd.conf`
+   and both `supabase.conf` includes) `lines with :3010: 0`; relay range
+   `32768 49151`.
 5. **Where the four runtime variables live** — `SUPABASE_URL`,
    `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_PUBLISHABLE_KEY`, `LOVABLE_API_KEY`.
    Note these are read from `process.env` at **runtime**, not baked at build
    time like enroll's `VITE_*` values. Two different mechanisms in one app.
+
+   **Checked against the bun build, 14 Sep 2026.** Both mechanisms are live:
+   - **Build time:** the wrapper runs Vite's `loadEnv(mode, cwd, "VITE_")` and
+     `define`s each value. The repo **commits `.env`** with `VITE_SUPABASE_URL`
+     = `https://hwchtywjbmcvpucidfmy.supabase.co` (Lovable Cloud) and its
+     publishable key. Both are baked into 2 browser files
+     (`assets/index-*.js`, `assets/supabase-browser-*.js`) **and** 2 SSR files
+     (`_ssr/client-*.mjs`, `_ssr/supabase-browser-*.mjs`): `client.ts` prefers
+     `import.meta.env.VITE_*` over `process.env`, so runtime values do not
+     override them. A VPS build must supply growth's values at build time.
+   - **Runtime:** `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
+     `SUPABASE_PUBLISHABLE_KEY` (server client, auth middleware, hook routes)
+     and `LOVABLE_API_KEY` from `process.env`. `LOVABLE_API_KEY` is named in 3
+     server files and 0 browser files; `SUPABASE_SERVICE_ROLE_KEY` in 0 browser
+     files.
+   - **Bun auto-loads `.env` from the current directory at runtime** (tested
+     with bun 1.4.2): a real environment variable wins over the file, a variable
+     only in the file is used, `--no-env-file` or another directory loads
+     nothing. So a process started in the checkout, missing any variable, would
+     silently fall back to the committed **Lovable Cloud** values.
+   - A third `LOVABLE_API_KEY` consumer exists now: `call-audits.functions.ts`
+     (call transcription via `/v1/audio/transcriptions`, model
+     `google/gemini-3.5-transcribe`, then scoring).
 6. **Only ~9 routes are server-rendered.** `src/routes/_authenticated/route.tsx`
    sets `ssr: false`, so all 111 authenticated routes render client-side. The
    process exists for **server functions**, not rendering — so a healthcheck must
@@ -821,3 +904,14 @@ here are the detail behind them.
    directory listing** of `public_html` (Apache's `Index of /`, `200`; seen
    14 Sep 2026). The app's own `ProxyPass /` will replace it. Until then, a `200`
    there is no evidence of anything.
+8. **`LOVABLE_API_KEY` cannot be carried off Lovable** — from Lovable's docs,
+   read 14 Sep 2026 (`docs.lovable.dev/features/secrets`): secrets are
+   write-only, *"its value can never be viewed again in Lovable, only replaced
+   or deleted"*; `LOVABLE_` is reserved for Lovable-managed values; this key has
+   a Rotate action and cannot be deleted. No Lovable page says whether the
+   gateway accepts calls from an app hosted elsewhere, and without the value it
+   cannot be tested. Three consumers at `4dc6623`: `ai.functions.ts` (ask-AI,
+   `google/gemini-3-flash-preview`), `module-auto.functions.ts` (AI training),
+   `call-audits.functions.ts` (`/v1/audio/transcriptions` with
+   `google/gemini-3.5-transcribe`, scoring with `google/gemini-3.8-flash`).
+   The gateway URL and model names are hard-coded.

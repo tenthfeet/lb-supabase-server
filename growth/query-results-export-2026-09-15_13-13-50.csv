@@ -1,0 +1,37 @@
+detail;kind;n;name
+1.6.4;1 extension;;pg_cron
+0.20.3;1 extension;;pg_net
+1.11;1 extension;;pg_stat_statements
+1.3;1 extension;;pgcrypto
+1.0;1 extension;;plpgsql
+0.3.1;1 extension;;supabase_vault
+1.1;1 extension;;uuid-ossp
+15 19 * * * active=true http=true lovable=true last=succeeded 2026-09-14 19:15;2 cron job;6;attendance-roll-day
+30 0 * * * active=true http=false lovable=false last=succeeded 2026-09-15 00:30;2 cron job;3;auto-generate-leave-delegations
+*/15 * * * * active=true http=true lovable=true last=succeeded 2026-09-15 07:30;2 cron job;1;dwr-shift-cutoff-nudge
+15 * * * * active=true http=false lovable=false last=failed 2026-09-15 07:15;2 cron job;2;escalate-stale-approvals
+35 0 * * * active=true http=false lovable=false last=succeeded 2026-09-15 00:35;2 cron job;5;renew-monthly-incentive-plans
+;3 auth;0;mfa factors
+;3 auth;3;users banned or deleted
+;3 auth;40;users email confirmed
+;3 auth;5;users signed in last 30 days
+;3 auth;40;users total
+;3 auth;40;users with bcrypt hash
+;3 auth;1;users with no identity
+;3 auth;0;users with no password
+;3 auth identity;39;email
+named in some row=1;4 bucket;1;admission-payments
+named in some row=3;4 bucket;3;call-audits
+named in some row=0;4 bucket;0;chat-attachments
+named in some row=0;4 bucket;0;employee-documents
+named in some row=0;4 bucket;0;hr-letters
+named in some row=0;4 bucket;0;lms-media
+named in some row=0;4 bucket;0;org-photos
+with file=3;4 path column;3;call_audits.audio_path in call-audits
+with file=0;4 path column;0;chat_messages.attachment_path in chat-attachments
+with file=0;4 path column;30;employee_documents.storage_path in employee-documents
+with file=0;4 path column;0;issued_letters.pdf_path in hr-letters
+with file=0;4 path column;0;success_posts.screenshot_path in admission-payments
+;5 foreign keys;140;public to auth.users
+;5 foreign keys;186;public to public
+tables with refs=0;6 lovable refs;180;tables scanned

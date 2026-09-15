@@ -1,0 +1,33 @@
+detail;kind;n;name
+project--f44cdfc8-b7a6-443d-b6a2-59b1ae8283f7.lovable.app/api/public/hooks/attendance-roll-day;1 http job url;6;attendance-roll-day
+project--f44cdfc8-b7a6-443d-b6a2-59b1ae8283f7.lovable.app/api/public/hooks/dwr-nudge;1 http job url;1;dwr-shift-cutoff-nudge
+succeeded=1 last error: none;2 job runs 7 days (n = failed);0;attendance-roll-day
+succeeded=7 last error: none;2 job runs 7 days (n = failed);0;auto-generate-leave-delegations
+succeeded=672 last error: none;2 job runs 7 days (n = failed);0;dwr-shift-cutoff-nudge
+"succeeded=0 last error: ERROR:  column ""user_id"" does not exist
+LINE 2:       SELECT 'change_request'::text AS et, id, user_id, stat...
+                                      ";2 job runs 7 days (n = failed);168;escalate-stale-approvals
+succeeded=1 last error: none;2 job runs 7 days (n = failed);0;renew-monthly-incentive-plans
+mime=any;3 bucket limits;;admission-payments
+mime=any;3 bucket limits;52428800;call-audits
+mime=any;3 bucket limits;;chat-attachments
+mime=any;3 bucket limits;;employee-documents
+mime=any;3 bucket limits;;hr-letters
+mime=any;3 bucket limits;;lms-media
+mime=any;3 bucket limits;;org-photos
+enabled;4 auth.users trigger;;on_auth_user_created
+enabled;4 auth.users trigger;;on_auth_user_created_dev_roles
+;5 auth;3;users banned now
+;5 auth;0;users soft-deleted
+tables=180;6 json bytes;9679226;all public tables
+;6 json bytes;51163;auth.users
+;7 json bytes top 10;311200;activity_sessions
+;7 json bytes top 10;276435;appointments
+;7 json bytes top 10;485826;attendance_days
+;7 json bytes top 10;862468;dwr_reports
+;7 json bytes top 10;292088;efficiency_entries
+;7 json bytes top 10;277521;follow_up_calls
+;7 json bytes top 10;2302996;hr_audit_log
+;7 json bytes top 10;390903;inbox_messages
+;7 json bytes top 10;365441;manager_tasks
+;7 json bytes top 10;1257727;sales_admissions

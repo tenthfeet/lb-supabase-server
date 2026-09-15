@@ -1,6 +1,6 @@
 # growth.lilbrahmas.org — deploy kit
 
-**Status: git, DNS, cPanel and SSL are done. The Supabase stack is complete: running, isolated from enroll, registered as instance 2, and public at https://api.growth.lilbrahmas.org since 14 Sep 2026. Its database is empty. Serving the app is not designed yet.** The rest is eleven steps, one conversation each: see *Remaining steps*.
+**Status: git, DNS, cPanel and SSL are done. The Supabase stack is complete: running, isolated from enroll, registered as instance 2, and public at https://api.growth.lilbrahmas.org since 14 Sep 2026. Its database is empty. The serving design was decided on 14 Sep 2026 (step 1). Step 2, data route and scope, was done on 15 Sep 2026: the copy goes through Lovable Cloud's SQL editor as JSON (`MIGRATION-RECORD.md`).** Nine steps remain, one conversation each: see *Remaining steps*.
 
 This folder is the deploy kit for the second app on the VPS. It is deliberately
 thin right now — most of enroll's documents are records of a migration that has
@@ -10,6 +10,7 @@ already happened, and growth's has not. What exists here is what is true.
 |---|---|
 | `GIT-SETUP.md` | The completed git work: deploy key, ssh alias, clone. Also the template for instance 3. |
 | `STACK-PROVISIONING.md` | The Supabase stack work: what is done, the baseline to verify against, and where the runbook diverges for growth. |
+| `MIGRATION-RECORD.md` | Moving the data: route, scope, and later the import and cutover. Started by step 2. |
 | `README.md` | This file. Where things stand and what the next decision is. |
 
 Everything else — `OPERATIONS.md`, `deploy-growth`, the migration record — gets
@@ -29,8 +30,9 @@ written when the work it describes actually happens.
 | ✅ **DNS** | both names resolve to `184.168.122.104`, authoritatively and publicly |
 | ✅ **SSL** | one Let's Encrypt SAN cert covers both hostnames, valid to 11 Dec 2026 |
 | ✅ **Supabase stack** | running since ~07:05 UTC 13 Sep 2026 at `/opt/supabase/stacks/growth`: 11/11 healthy, ports 8010 / 5442 / 6553 on loopback only, keys and tokens proven isolated from enroll, enroll and coturn verified undisturbed. Empty database — no migrations applied. Registered as `growth = instance 2` in `/opt/supabase/README.md`. **Public since 14 Sep 2026** at `https://api.growth.lilbrahmas.org` through Apache (runbook §8–§9 verified): GoTrue, WebSocket and the ACME renewal path work through the proxy, Studio asks for its basic-auth login, and enroll and coturn were verified undisturbed |
-| 🟡 **`.env.production.local`** | no longer blocked on the stack — growth's publishable key now exists in the stack `.env`. Where the app's runtime variables live is still part of the open serving design |
-| ❌ **Serving** | design not started. See *The finding that changed the plan*, and steps 1, 6 and 7 of *Remaining steps*. |
+| 🟡 **`.env.production.local`** | decided in step 1 (open question 3): build-time `VITE_*` only, as enroll. Not created yet — step 6 |
+| 🟡 **Serving** | ✅ design decided 14 Sep 2026 (step 1): bun build via `NITRO_PRESET`, port `3010` on loopback, enroll's env pattern, `pg_cron` enabled, AI features pending. Nothing built on the server yet — steps 6 and 7 |
+| ✅ **Data route and scope** | decided 15 Sep 2026 (step 2): Lovable Cloud's SQL editor, one JSON document per table, keeping all 40 users' passwords. Scope snapshot: 180 tables (120 with rows), 11,980 rows, 40 users, 4 storage files, ~9.7 MB as JSON. Nothing imported yet — step 5 |
 
 ---
 
@@ -105,8 +107,25 @@ nothing and still succeeds. No `pg_net`, no callback URL. The two hook routes ar
 orphans that nothing calls, and they are gated only by the publishable key —
 which ships in the browser bundle. See `STACK-PROVISIONING.md` §§3.4–3.5.
 
+**Update, 14 Sep 2026: at HEAD `4dc6623` pg_cron is required.** The repo now has
+**246** migrations. Two added that morning, `20260914051218_*` and
+`20260914051303_*`, read `cron.job` and call `cron.schedule` **without** the
+`IF EXISTS` guard, to schedule a daily `renew-monthly-incentive-plans` job. With
+the extension absent the `cron` schema does not exist, so under `ON_ERROR_STOP`
+step 4 would stop at the first of them. Still no `CREATE EXTENSION`, no `pg_net`.
+
+**Update, 15 Sep 2026: `pg_net` is used.** Migration `20260914120009_*`
+schedules `attendance-roll-day` daily at 19:15 UTC as a `net.http_post` to the
+**Lovable-hosted app's** hook URL, with Lovable Cloud's anon key. Applying it
+needs only `pg_cron`. Left as it is on the VPS, it either calls Lovable's app
+or fails nightly, depending on whether growth's stack has `pg_net` (unchecked).
+A second HTTP job, `dwr-shift-cutoff-nudge` (every 15 minutes), exists **only in
+Lovable Cloud**. No migration creates it, so DWR nudges stop at cutover unless
+something replaces it. Step 4 handles both. Details in `MIGRATION-RECORD.md` §1.
+
 The server needs four variables: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
-`SUPABASE_PUBLISHABLE_KEY`, `LOVABLE_API_KEY`.
+`SUPABASE_PUBLISHABLE_KEY`, `LOVABLE_API_KEY`. **The last will not be available
+at deployment** (open question 6): the three AI features are pending.
 
 ---
 
@@ -157,35 +176,75 @@ served directly by Apache.
 
 ## Open questions, in the order they block things
 
-1. **App server port scheme.** Proposed: `3000 + 10(N-1)`, so growth is **3010**.
-   This extends a documented convention and needs sign-off. The runbook's own
-   rule applies — re-derive and check rather than trusting the formula.
+1. **App server port scheme.** ✅ **Decided 14 Sep 2026: `3000 + 10(N-1)`, so
+   growth is `3010`**, bound to `127.0.0.1` only. Re-checked free on the server
+   at 07:16 UTC (`STACK-PROVISIONING.md` §5 item 4). Step 6 re-checks it
+   immediately before the container binds it.
 2. **Nitro preset.** Currently Cloudflare by default, and it is not set anywhere
    in the repo — it comes from `@lovable.dev/vite-tanstack-config@2.13.1`.
    Target **`bun`**, not `node-server`: Lovable's toolchain is bun and this
    server has no Node. Whether an env var can override the wrapper, or only
    editing `vite.config.ts` can, is the open part — and it decides whether this
    is maintainable, since Lovable owns that file. **Answerable off the server.**
+   ✅ **Decided 14 Sep 2026: the environment variable, no Lovable change.**
+   Proven on the working copy at `4dc6623`: `NITRO_PRESET=bun` alone gives
+   `.output/nitro.json` → `"preset": "bun"`, and the output serves on loopback
+   (`STACK-PROVISIONING.md` §5 item 1). `deploy-growth` sets `NITRO_PRESET=bun`
+   and refuses to deploy unless `.output/nitro.json` says `"bun"`, so a wrapper
+   update that stops honouring the variable fails the deploy instead of shipping
+   a Cloudflare build. `vite.config.ts` stays untouched. Lovable's own builds
+   are unaffected either way: inside its sandbox the wrapper deletes
+   `NITRO_PRESET` and forces its own Cloudflare preset.
 3. **Where the four environment variables live**, and how the service-role key is
    handled — stack `.env` is mode 600 for this reason. Note these are read from
    `process.env` at runtime, not baked at build time like enroll's `VITE_*`.
+   **Answered 14 Sep 2026: follow enroll.** Build time, decided: growth's
+   `VITE_SUPABASE_URL` (`https://api.growth.lilbrahmas.org`) and
+   `VITE_SUPABASE_PUBLISHABLE_KEY` go in `/opt/apps/growth/.env.production.local`
+   (gitignored), created once by hand as in enroll's `deploy.sh` setup step 5.
+   `deploy-growth` refuses to build without it and, after the build, refuses if
+   `hwchtywjbmcvpucidfmy` appears in `.output/public` **or** `.output/server`:
+   growth's server-rendered code bakes the values too (`STACK-PROVISIONING.md`
+   §5 item 5). ✅ **Runtime, decided 14 Sep 2026, enroll's secrets pattern:**
+   growth's stack `.env` (mode 600) stays the only secrets file. The app
+   container's compose file maps in, by name, only `SUPABASE_URL`,
+   `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_PUBLISHABLE_KEY`, and
+   `LOVABLE_API_KEY` wired empty (question 6) — enroll's "wired, empty —
+   outstanding". No value is copied into another file, and the container never
+   sees `JWT_SECRET`, `POSTGRES_PASSWORD` or the rest. Bun starts with
+   `--no-env-file`, so the committed `.env` (Lovable Cloud) is never read. The
+   exact values and the network path to Supabase are step 6's.
 4. ~~`pg_cron` / `pg_net`~~ — **resolved, not required.** See above.
 5. **Whether to enable `pg_cron` anyway.** Nothing needs it, but without it the
    two SQL jobs in `20260722071430_*` never run, and nothing reports that. The
    migration schedules them only if the extension already exists, so this has to
-   be decided before the migrations are applied.
-6. **Whether `LOVABLE_API_KEY` works off Lovable.** Ask-AI and AI training call
-   Lovable's gateway from the server at runtime.
+   be decided before the migrations are applied. **Since 14 Sep 2026 no longer
+   optional:** two unguarded migrations fail without it — see the update under
+   *Two things to know*. ✅ **Decided 14 Sep 2026: enable it.** Step 4's first
+   action is `CREATE EXTENSION pg_cron`, before any migration. Growth's Postgres
+   already preloads it with `cron.database_name: postgres`, so no config change
+   or restart (`STACK-PROVISIONING.md` §3.4). Step 5 pauses the three jobs during
+   the rehearsal import, because they write rows the counts would not expect.
+6. **Whether `LOVABLE_API_KEY` works off Lovable.** ✅ **Decided 14 Sep 2026:
+   it will not be available.** Lovable secrets are write-only and this one is
+   Lovable-managed (`STACK-PROVISIONING.md` §5 item 8). The three AI features —
+   **ask-AI, AI training and call audits — are pending**, to be handled after
+   deployment. The app deploys without the key. What users see meanwhile: each
+   server function checks the key first and throws a plain error —
+   `AI is not configured` (`ai.functions.ts` ×2, `module-auto.functions.ts`) or
+   `AI is not configured for this project.` (`call-audits.functions.ts` ×3) —
+   so the features fail visibly and nothing else is affected.
 
-Step 1 of *Remaining steps* answers all of these.
+✅ **All answered by step 1 on 14 Sep 2026.** No change was asked of Lovable.
+The evidence is in `STACK-PROVISIONING.md` §5.
 
 ---
 
 ## Next step
 
-**The Supabase stack is finished as of 14 Sep 2026.** Next is step 1 of
-*Remaining steps* below: the serving design decisions. Nothing on the app side
-has started.
+**Steps 1 and 2 are done** (14 and 15 Sep 2026). Next: step 3 has no
+prerequisites, and step 4's prerequisites (1 and 2) are both met.
+Nothing on the app side has been built on the server.
 
 **The baseline below was captured on 12 Sep 2026** — recorded values are in
 `STACK-PROVISIONING.md` §2, which also explains why the raw coturn capture is
@@ -216,8 +275,8 @@ steps 2 and 6 start).
 
 | # | Step | Needs | Where the work happens |
 |---|---|---|---|
-| 1 | Serving design decisions | — | workstation, Lovable |
-| 2 | Data route and migration scope | — | Lovable Cloud, read-only |
+| 1 | ✅ Serving design decisions — done 14 Sep 2026 | — | workstation, Lovable |
+| 2 | ✅ Data route and migration scope — done 15 Sep 2026 | — | Lovable Cloud, read-only |
 | 3 | Restrict Studio | — | server, Apache |
 | 4 | Apply the migrations | 1, 2 | server |
 | 5 | Rehearsal data import | 2, 3, 4 | server |
@@ -249,6 +308,8 @@ Settle what gets built. Answers every item under *Open questions*.
 
 **Done when** each open question has a recorded answer.
 
+✅ **Done 14 Sep 2026.** All six open questions answered; see *Open questions*.
+
 ### 2. Data route and migration scope
 
 Know what moves and how, before anything is imported. Writes nothing anywhere.
@@ -259,10 +320,25 @@ Know what moves and how, before anything is imported. Writes nothing anywhere.
   unlikely to reach it.
 - Row counts per table, the number of auth users, storage buckets and object
   counts.
-- Re-count the migrations at HEAD; there were 226 when last checked.
+- Re-count the migrations at HEAD; there were 246 at `4dc6623` on 14 Sep 2026.
 
 **Done when** the route and the scope table are recorded in a new
 `MIGRATION-RECORD.md`.
+
+✅ **Done 15 Sep 2026.** Route decided: **Lovable Cloud's SQL editor, one JSON
+document per table**, for step 5 and again at step 10. *Export data* is not used,
+because it leaves passwords out. What step 5 inherits, including keeping the
+download's secrets off the screen, is in `MIGRATION-RECORD.md` §5. Scope snapshot: **180 tables** (120 with rows), **11,980 rows**,
+**40 auth users**, **4 storage objects** (~3.4 MB) across 7 private buckets that no
+migration creates. The repo at `63b7ca15` has **263** migrations, matching
+Lovable's ledger, and its `types.ts` matches the tables name for name. All 40 users have a bcrypt hash the SQL
+editor can read. Lovable's Export leaves passwords out. Five `pg_cron` jobs run
+in the source. Two call the Lovable-hosted app, and one of those is not in any
+migration (see *Two things to know*). All 30 `employee_documents` rows point at
+files that do not exist, in production today. `escalate-stale-approvals` has failed 168 of 168 runs in
+7 days on a bug in its own function (`change_requests` has no `user_id`), so it
+will fail on the VPS too. A JSON copy of everything is ~9.7 MB. Left: choose the
+copy route. See `MIGRATION-RECORD.md`.
 
 ### 3. Restrict Studio
 
@@ -280,6 +356,13 @@ steps 45–47 of the adding-instance runbook still pass.
 Growth's schema on its stack, with a ledger. **Needs** 1 (the `pg_cron` decision)
 and 2 (the migration count).
 
+- First `CREATE EXTENSION pg_cron` (step 1, open question 5). Two migrations
+  fail without it.
+- From step 2: create the 7 storage buckets, which no migration creates. After
+  the migrations, unschedule or repoint `attendance-roll-day`, which calls the
+  Lovable-hosted app. Check whether growth's stack has `pg_net`, and compare its
+  extensions with the source's seven. `dwr-shift-cutoff-nudge` is not in any
+  migration; replace it (`MIGRATION-RECORD.md` §1).
 - Reuse enroll's apply logic: a ledger, `ON_ERROR_STOP`, refusal to run against a
   non-empty `public`. enroll's `.applied-migrations` must not be imported
   (`STACK-PROVISIONING.md` §3.3).
@@ -294,6 +377,8 @@ both audits pass or their exceptions are written down.
 Prove the import end to end on a copy. Cutover repeats it for real. **Needs** 2, 3
 and 4.
 
+- Pause every job in `cron.job` while importing (`cron.alter_job(…, active :=
+  false)`): they write rows the counts would not expect.
 - Users before data, keeping their original IDs (enroll `00-PLAN.md` Phase 2).
   Inserting users fires `on_auth_user_created_dev_roles`, which creates `profiles`
   rows and `trainee` roles that the imported data would duplicate.
@@ -315,6 +400,11 @@ The app running on the VPS. **Needs** 1 and 4.
   a healthcheck that calls a server function rather than fetching `/`.
 - The runtime variables wired as step 1 decided. The service-role key never
   leaves the box.
+- From step 1: the git guard runs **before** the build, which regenerates
+  `src/routeTree.gen.ts`. Build with `NITRO_PRESET=bun`, then refuse unless
+  `.output/nitro.json` says `"bun"`. Refuse without `.env.production.local`, and
+  if `hwchtywjbmcvpucidfmy` is in `.output/public` or `.output/server`. Start Bun
+  with `--no-env-file`. Re-check port 3010 is free just before binding it.
 
 **Done when** the container comes back healthy after a restart, and a new
 `OPERATIONS.md` describes deploying.
@@ -357,8 +447,15 @@ Users on growth.lilbrahmas.org instead of learniverse-hub-442.lovable.app.
   step 5 as the final copy, then move users over.
 - From outside, with the publishable key taken from the deployed app: protected
   tables return `[]`, and the built app holds no trace of the Lovable project ID.
+- No `cron.job` command on the VPS contains `lovable.app` (`MIGRATION-RECORD.md`
+  §1).
+- At the freeze, stop Lovable Cloud's own `pg_cron` jobs through Lovable. Two of
+  them call the Lovable-hosted app, which writes to Lovable Cloud.
 
 **Done when** users work on the VPS and nothing writes to Lovable Cloud any more.
+
+Known at cutover (step 1): ask-AI, AI training and call audits answer
+`AI is not configured` until the AI features are handled after deployment.
 
 ### 11. Monitoring and a reboot test
 
