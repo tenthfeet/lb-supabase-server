@@ -25,6 +25,7 @@ happens; what is written here has been run and verified unless marked otherwise.
 | ✅ SSL issued | Let's Encrypt, `ssl_verify=0` on both, valid to **11 Dec 2026** |
 | ✅ Stack | running at `/opt/supabase/stacks/growth` since ~07:05 UTC 13 Sep 2026 — 11/11 healthy, ports on loopback only, keys and tokens proven isolated from enroll, enroll and coturn verified undisturbed. See §4. Empty database, no migrations applied |
 | ✅ Apache reverse proxy | `https://api.growth.lilbrahmas.org` → `127.0.0.1:8010` since 14 Sep 2026. Verified through the proxy at 05:19 UTC: GoTrue `200` with the key, WebSocket `101` after 5 s, ACME probe `200` over HTTP and HTTPS, Studio `401` asking for basic auth. enroll and coturn verified undisturbed. See §4 |
+| ✅ Studio closed | since 15 Sep 2026 (README step 3): `studio-closed.conf` beside `supabase.conf`. Studio answers `403` from Apache to every address, with no login prompt; the four API prefixes and `/.well-known/` stay public. Runbook steps 45–47 pass, and enroll and coturn were verified undisturbed. See §6 |
 | ✅ Serving design for the app | decided 14 Sep 2026 (README step 1) — see `README.md` *Open questions*; evidence in §5 |
 
 ### The `.com` mistake, for the record
@@ -629,7 +630,9 @@ Growth's containers. Expect `growth containers: 11 healthy: 11` and no
 
 **Through the proxy, from 14 Sep 2026.** Expect GoTrue's JSON with `[200]`,
 `websocket: 101 after 5.0…s` (fast means broken), and a `401` with
-`www-authenticate: Basic`, so `studio header lines: 2`.
+`www-authenticate: Basic`, so `studio header lines: 2`. **Since 15 Sep 2026
+(§6) Studio is closed:** expect `HTTP/2 403` with no `www-authenticate`, so
+`studio header lines: 1`. A `401` there means the restriction is gone.
 
 ```
 date -u; curl -s -m 10 -w ' [%{http_code}]\n' -H "apikey: $(awk -F= '$1=="SUPABASE_PUBLISHABLE_KEY"{print(substr($0,index($0,"=")+1))}' /opt/supabase/stacks/growth/.env)" https://api.growth.lilbrahmas.org/auth/v1/health; curl -s -m 5 -o /dev/null -w 'websocket: %{http_code} after %{time_total}s\n' --http1.1 -H "apikey: $(awk -F= '$1=="SUPABASE_PUBLISHABLE_KEY"{print(substr($0,index($0,"=")+1))}' /opt/supabase/stacks/growth/.env)" -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' 'https://api.growth.lilbrahmas.org/realtime/v1/websocket?vsn=1.0.0'; curl -s -m 10 -o /dev/null -D - https://api.growth.lilbrahmas.org/ | awk 'NR==1||tolower($1)=="www-authenticate:"{n++;print}END{print("studio header lines: "n+0)}'
@@ -915,3 +918,215 @@ here are the detail behind them.
    `call-audits.functions.ts` (`/v1/audio/transcriptions` with
    `google/gemini-3.5-transcribe`, scoring with `google/gemini-3.8-flash`).
    The gateway URL and model names are hard-coded.
+
+---
+
+## 6. Restrict Studio: README step 3
+
+✅ **Done 15 Sep 2026.** Studio is closed to every address. The API paths and
+`/.well-known/` stay public. See *Step 3 is complete* below.
+
+### Facts gathered, read-only, 08:26 UTC
+
+| Check | Result |
+|---|---|
+| gateway routes, `volumes/api/envoy/lds.template.yaml` (next to `cds.yaml`, `envoy.yaml`, `docker-entrypoint.sh`) | 21 matches routed to a cluster. **auth:** `/auth/v1/` and six more specific `/auth/v1/…` prefixes, plus `/.well-known/oauth-authorization-server`, which Apache never forwards because of `ProxyPass /.well-known/ !`. **storage** `/storage/v1/` · **rest** `/rest/v1/` (exact path and prefix) and `/graphql/v1` · **realtime** four prefixes under `/realtime/v1/` · **functions** `/functions/v1/` · **meta** `/pg/` · **studio** `/api/mcp`, `/mcp` and the catch-all `/`. The other 14 of 35 match lines are not followed by a cluster and were not examined: a deny-by-default rule restricts them anyway |
+| what the app calls | only `/auth/v1/`, `/rest/v1/`, `/realtime/v1/`, `/storage/v1/`. `src/` has no `graphql`, `/functions/v1`, `functions.invoke`, `/pg/` or `/mcp` |
+| Apache modules | `authz_host_module`, `headers_module`, `proxy_module`: 3 of 3 |
+| include folder | only `supabase.conf`, root 644, 186 bytes, sha256 `78266462…a2ace3`, unchanged since 14 Sep 04:50 |
+| Studio's `/` in the SSL domlog, last 5000 lines | **4 requests on 14 Sep from 4 unrelated addresses**, all `401`. Within a day of going public, strangers found the login |
+
+**The operator's connection is a mobile hotspot.** Mobile carriers commonly give
+one public address to many subscribers and change it often, so it cannot safely
+go on an allow-list: it would admit strangers and later lock the operator out.
+Others also need Studio; their connections are not yet known.
+
+| Check | Result |
+|---|---|
+| Studio login settings, growth against enroll, lengths and sameness only | ✅ `DASHBOARD_PASSWORD` is 32 characters and **differs** from enroll's, as runbook step 12 regenerated it. `DASHBOARD_USERNAME` is the default `supabase` on both, a public name that does not matter. Enroll's credentials cannot open growth's Studio |
+
+The operator has logged into **enroll's** Studio from the hotspot for about a
+month. That does not show a fixed address, because enroll has no allow-list;
+Apache's logs of those logins can show it.
+
+| Check | Result |
+|---|---|
+| addresses that got a `200` on enroll's Studio paths (not `/…/v1` API paths, not `/.well-known/`), from `/home/enroll/logs/api.enroll.lilbrahmas.org-ssl_log-Sep-2026.gz` plus the live domlog | 345,640 lines, **31 Aug 12:07 to 15 Sep 08:45 UTC** only, since older months are not kept. **One address, one session:** 311 requests on 15 Sep, 08:35–08:40 UTC, an address in `152.57.x.x`, apparently a mobile-carrier range. So the log shows today's address but nothing about whether it is stable |
+
+A later request from the hotspot did not appear in growth's SSL domlog
+(08:49 UTC, `0` Studio requests in the last 2000 lines), so the page most likely
+went to `http://` or to enroll. That was not pursued, because the decision below
+does not depend on any address.
+
+### Decision and design: 15 Sep 2026
+
+**Studio is closed to every address.** The allow-list starts empty. Adding an
+address later, once one is proven stable, is its own change.
+
+A new file, `studio-closed.conf`, goes into growth's include folder beside
+`supabase.conf`. cPanel already includes that folder by a glob (`…/*.conf`), so
+there is no `ensure_vhost_includes` run and `supabase.conf` stays byte-identical.
+
+```
+# growth step 3: Studio closed, API and ACME public
+<Location "/">
+Require all denied
+</Location>
+<LocationMatch "^/(auth|rest|realtime|storage)/v1/">
+Require all granted
+</LocationMatch>
+<Location "/.well-known/">
+Require all granted
+</Location>
+```
+
+sha256 `bb1179489bcfe98bc8101f8f11cbf90f490479dd1ebab60aa56ee5cb0cd365fb`,
+10 lines, 247 bytes, computed locally with the same `printf` the server will run.
+No indentation, so a dropped space can only change the hash or break the syntax.
+
+- **How it works.** `<Location>` and `<LocationMatch>` merge in the order they
+  appear, and with `AuthMerging` at its default (`Off`) a later `Require`
+  replaces an earlier one. `/` is denied first, then the four API prefixes and
+  `/.well-known/` are opened again.
+- **Public:** `/auth/v1/`, `/rest/v1/`, `/realtime/v1/` and `/storage/v1/` (the
+  four the app calls), plus `/.well-known/` for AutoSSL, which renews the
+  certificate shared with `growth.lilbrahmas.org`.
+- **Refused:** everything else, including Studio, `/pg/`, `/functions/v1/`,
+  `/graphql/v1`, `/mcp` and the 14 Envoy matches not examined.
+- **Studio's basic auth stays** in Envoy, so any future allow-list entry still
+  meets the login.
+- **Scope:** only the SSL vhost of `api.growth.lilbrahmas.org`, which is where
+  the include lives. Port 80 has no proxy.
+
+**Plan:**
+1. fresh snapshot, because the last one is from 14 Sep
+2. Apache before the change, and what a reload would apply
+3. write the file in `/root`, check its hash, and syntax-test it with a
+   missing-file control
+4. install it, which is inert until a reload
+5. gated `apachectl configtest && apachectl graceful`
+6. verify: Studio `403` with no `www-authenticate`; dot-segment and
+   double-slash attempts `403`; runbook steps 45–47 through the proxy; enroll's
+   codes; host checks
+
+**Rollback:** `rm` the file, then `apachectl configtest && apachectl graceful`.
+The glob still matches `supabase.conf`, so removing this file never leaves an
+`Include` that matches nothing.
+
+### Progress
+
+| Step | What | Result |
+|---|---|---|
+| 1 | fresh snapshot: the reusable host check, growth health, the checks through the proxy, and the firewall against the preproxy copy, all unchanged from §4 | ✅ 08:54–08:55 UTC, identical to 14 Sep. coturn `MainPID=1911360` since `2026-08-26 00:46:34 UTC`, so `upcp` did not restart it. Missing `0`; relay `32768 49151`; `REDIRECT 1`; `removed: 0 added: 25 added-not-on-growth-bridge: 3` with the three loopback `DROP` lines; networks `bridge,enroll_default,growth_default,host,none`; enroll `11 healthy: 11`, API `401`. Growth `11 healthy: 11`; GoTrue `[200]`; `websocket: 101 after 5.000618s`; Studio `HTTP/2 401` with `www-authenticate: Basic`, `studio header lines: 2`; `iptables changes since the preproxy copy: 0`; `growth listeners: 3 of 3` on `127.0.0.1` |
+
+The pasted command read `docker networkls` yet printed the networks: the same
+copy-only mangle as on 13 and 14 Sep.
+
+| Step | What | Result |
+|---|---|---|
+| 2 | `apachectl configtest` · the `ServerName`, `Include`, `Location`, `Require` and `AuthMerging` lines of api.growth's `:443` block · `AuthMerging` anywhere in `conf/` and `conf.d/` · one code per site · the last reload · Apache and certificate files changed since 14 Sep 05:00 UTC | ✅ 08:57 UTC. `Syntax OK`. One `:443` block: `ServerName` at line 1189, the active `Include ".../growthlilbrahmas/api.growth.lilbrahmas.org/*.conf"` at 1267 (so a new `*.conf` there loads with no cPanel step), the commented hint at 1278, **no `Location` or `Require` lines**. `AuthMerging lines: 0`, so the default `Off` applies. enroll `200`, api.enroll `401`, growth `200`, api.growth `401`. Last reload **14 Sep 05:14:38 UTC**, the graceful of §8 step 41. **0 files changed** since 05:00 that day, so a reload now applies only this step's file |
+| 3 | `(set -C && printf … > /root/growth-studio-closed.conf) && sha256sum && wc -l -c`; `httpd -t -c` on a missing file as a control, then on the staged file | ✅ sha256 `bb117947…cd365fb`, **equal to the local `printf`**; `10 247`. The control failed as it must (`Syntax error in -C/-c directive: Could not open configuration file /root/growth-no-such-file.conf`), so `-c` reads the file. The staged file: `Syntax OK` |
+| 4 | `test ! -e <target> && cp` from `/root` `&&` `ls -la` `&&` `sha256sum *.conf` `&&` `sleep 5` `&&` Studio's headers | ✅ 09:01 UTC. `studio-closed.conf` `-rw-r--r-- root root 247`, sha256 `bb117947…cd365fb`; `supabase.conf` still `186`, `78266462…a2ace3`. Studio still `HTTP/2 401` with `www-authenticate: Basic`, so the file is inert until a reload |
+| 5 | one gated line: `find -newermt '2026-09-14 05:14:38'` must list only `studio-closed.conf` `&&` `apachectl configtest` `&&` `apachectl graceful` `&&` `sleep 5` `&&` five codes | ⚠️ 10:03:19 UTC, per the reload's log line. `changed since last reload: expected 1 of 1, other 0`, `Syntax OK`, graceful ran. enroll `200`, api.enroll `401`, growth `200`, api.growth health `401`, all as before. **But Studio `/` answered `401`, not the expected `403`**: the request still reached Envoy, so the new rule was not in effect. Nothing broke. Studio is as it was, behind its login. Investigating before any further change |
+| 5a, evidence | the last two reloads · `httpd -t -D DUMP_INCLUDES` for growth's files · Studio's response headers · codes for `/pg/`, `/graphql/v1`, `/project/default`, `/.well-known/` · `AH01630` lines since the reload · `Satisfy`, `<Proxy` and `AuthType` in the config | 10:06 UTC. Reloads: 14 Sep 05:14:38, then **15 Sep 10:03:19**, ours. The parsed config includes **both** `studio-closed.conf` and `supabase.conf` at line 1267. Studio: `HTTP/2 401`, `server: envoy`, `content-type: text/plain`, and **`www-authenticate: Basic realm="http://api.growth.lilbrahmas.org/403.shtml"`**; before the change the realm ended in `/`. `/pg/`, `/graphql/v1`, `/project/default` also `401`; `/.well-known/` `200`. **6 `AH01630` (client denied) or file-error lines since the reload.** Config: `Satisfy Any` at `httpd.conf:94`, five `<Proxymatch>` blocks for cPanel's service ports, and `<Proxy "*">` at 1562 and 1679 |
+
+**Hypothesis, not yet confirmed.** The rule loads and denies: the `AH01630`
+lines say so. The denial makes Apache serve cPanel's `ErrorDocument 403
+/403.shtml` by an internal redirect. `ProxyPass /` then forwards that URL to
+Envoy, whose Studio route answers `401` with a realm naming `/403.shtml`, and
+that response reaches the client. The realm shows Envoy was asked for
+`/403.shtml`, which no client sent. Effect: Studio's pages are refused, but
+Envoy's basic-auth prompt still answers from the internet, so the dashboard
+password can still be tested through any path.
+
+| Step | What | Result |
+|---|---|---|
+| 5b, confirm | `ErrorDocument` lines in `httpd.conf` and `conf.d` · `httpd.conf` lines 86–96 · each `AH01630` line since the reload · a count of Envoy log lines naming `/403.shtml` | ✅ **Confirmed** at 10:15 UTC. `/etc/apache2/conf.d/includes/errordocument.conf:11: ErrorDocument 403 /403.shtml`, one of 36 cPanel `ErrorDocument` lines. `AH01630 … client denied by server configuration` for `proxy:http://127.0.0.1:8010/` (twice), `…/pg/`, `…/graphql/v1` and `…/project/default`: **5, the rule's**. The sixth is `/home/growthlilbrahmas/public_html/php.ini` at 10:03:24, a check Apache made while building the frontend's `Index of /` listing, and not this rule. **Envoy logged 5 requests for `/403.shtml`**, one per denial. `Satisfy Any` (line 94) sits in cPanel's global DCV `<LocationMatch>` for `/.well-known/` validation paths, so it does not bear on this |
+
+**Root cause:** cPanel's global `ErrorDocument 403 /403.shtml` is a local URL.
+A denied request triggers an internal redirect to it, and `ProxyPass /` forwards
+that URL to Envoy.
+
+**Fix, one line:** `ErrorDocument 403 default` as line 2 of `studio-closed.conf`,
+at vhost level. Apache's documentation gives `default` precisely to restore the
+built-in message where an `ErrorDocument` would otherwise be inherited. It
+affects only this SSL vhost's own 403s: growth's frontend, enroll and every other
+site keep cPanel's pages. A rejected alternative, `ProxyPass /403.shtml !`, would
+open a non-proxied path and send Apache to the docroot for a file that does not
+exist.
+
+v2 sha256 `611022ab13aefbd69d8088f98fd067efe4ac6da6f96620227b3545e839eb22dd`,
+11 lines, 273 bytes. `diff` against v1 shows exactly `1a2 > ErrorDocument 403
+default`.
+
+**The check that must now pass:** Studio `/` answers `403` with no
+`www-authenticate` and no `server: envoy`; `/pg/`, `/graphql/v1` and
+`/project/default` answer `403`; Envoy logs no new `/403.shtml`; the API health
+check still gets Envoy's `401`.
+
+| Step | What | Result |
+|---|---|---|
+| 6a | `(set -C && printf … > /root/growth-studio-closed-v2.conf) && sha256sum && wc -l -c && diff` against v1; `httpd -t -c` on a missing file, then on v2 | ✅ sha256 `611022ab…9eb22dd`, **equal to the local `printf`**; `11 273`; `diff` exactly `1a2 > ErrorDocument 403 default`. The control failed as it must; v2 `Syntax OK` |
+
+The pasted command read `'<Location "/">''Require all denied'` and
+`httpd -t-c`. Neither mangle ran. The first would have merged two lines, giving
+10 lines and a different hash, and the second would have failed differently from
+the control's expected error. The hash is what proves what executed.
+
+| Step | What | Result |
+|---|---|---|
+| 6b | installed file's sha256 must equal v1 (`awk` gate, no two-space `sha256sum -c` line to mangle) `&&` `cp` v2 over it `&&` `ls -la` `&&` `sha256sum *.conf` `&&` `sleep 5` `&&` Studio's headers | ✅ 10:28 UTC. `installed file is v1: yes`. **`cp` stopped to ask `overwrite …?`**: root's `cp` is aliased to `cp -i` on this server, and the operator answered `y`. `studio-closed.conf` `-rw-r--r-- root root 273`, sha256 `611022ab…9eb22dd`; `supabase.conf` `186`, `78266462…a2ace3`. Studio still `HTTP/2 401`, realm `…/403.shtml`, `server: envoy`: inert until a reload |
+
+**Root's `cp` is `cp -i` here.** A command that overwrites a file with `cp`
+waits for `y`, which breaks a one-line chain. `-f` does not cancel `-i` in GNU
+`cp`. Use `\cp` to bypass the alias when an overwrite is intended and already
+gated.
+
+| Step | What | Result |
+|---|---|---|
+| 6c | `find -newermt '2026-09-15 10:03:19'` must list only `studio-closed.conf` `&&` `apachectl configtest` `&&` `apachectl graceful` `&&` `sleep 5` `&&` Studio's status, `server` and `www-authenticate` `&&` seven codes `&&` a count of Envoy log lines naming `/403.shtml` over the last 2 minutes | ✅ ~10:3x UTC. `changed since last reload: expected 1 of 1, other 0`, `Syntax OK`. **Studio `HTTP/2 403`, `server: Apache`, `www-authenticate lines: 0`**: Apache refuses it and Envoy is never asked. enroll `200`, api.enroll `401`, growth `200`, api.growth health `401` (still Envoy). **`/pg/`, `/graphql/v1`, `/project/default`: `403`.** Envoy lines naming `/403.shtml`: **0**. The fix works |
+| 7a, runbook 45–47 and the API | GoTrue health with the publishable key · WebSocket `--http1.1` · `/rest/v1/isolation_probe` and `/storage/v1/bucket` headers with the key · probe file into the existing `acme-challenge/`, fetched over HTTP (`-L`) and HTTPS, deleted, folder listed | ✅ 10:34 UTC. GoTrue JSON `[200]`; `websocket: 101 after 5.001236s`; `rest \| HTTP/2 404 \| server: envoy` (PostgREST's table-not-found, so the request got through); `storage \| HTTP/2 200 \| server: envoy`. `probe-growth-api-15sep [200 http://…]` and `[200 https://…]`, so `ProxyPass /.well-known/ !` and the `/.well-known/` grant both hold. `acme-challenge/` afterwards: empty, still `growthlilbrahmas:growthlilbrahmas` |
+| 7b, attempts past the rule | `curl --path-as-is`: `//`, `/rest/v1/../../project/default`, `/rest/v1/%2e%2e/%2e%2e/project/default`, `/REST/v1/`, `/auth/v1/../../`, `/a%2Fb`, `/%zz`; then Envoy log lines naming any `[45]xx.shtml` over the last 2 minutes | ✅ 10:35 UTC. The first five **`403`**: Apache merges slashes and resolves `..` and `%2e` before matching, and `LocationMatch` is case-sensitive, so `/REST/` is denied rather than re-opened. `/a%2Fb` **`404`** and `/%zz` **`400`**, Apache's own. Envoy lines naming an error page: **0**. cPanel's other error pages do not reach Envoy either: a `/404.shtml` redirect now meets the `/` deny and Apache's built-in 403 |
+
+The pasted 7a read `websocket:%{http_code}` and `-H "apikey:$(…"`: copy-only
+drops. The output printed `websocket: 101` with its space, and the API
+answered.
+
+| Step | What | Result |
+|---|---|---|
+| 7c, nothing disturbed | the reusable host check, growth health, firewall against the preproxy copy, listeners: the same commands as step 1 | ✅ 10:46 UTC, identical to step 1. coturn `MainPID=1911360` since `2026-08-26 00:46:34 UTC`; missing `0`; relay `32768 49151`; `REDIRECT 1`; `removed: 0 added: 25 added-not-on-growth-bridge: 3` with the three loopback `DROP` lines; networks unchanged; enroll `11 healthy: 11`, API `401`. Growth `11 healthy: 11`; `iptables changes since the preproxy copy: 0`; `growth listeners: 3 of 3` on `127.0.0.1` |
+
+**Step 3 is complete, 15 Sep 2026.** Studio at
+`https://api.growth.lilbrahmas.org/` answers `403` from Apache to every address,
+with no login prompt, and Envoy never sees the request. Runbook steps 45–47 pass
+through the proxy, and so do `/rest/v1/` and `/storage/v1/`. Enroll, coturn and
+growth's frontend answer as before.
+
+**The live file**, `/etc/apache2/conf.d/userdata/ssl/2_4/growthlilbrahmas/api.growth.lilbrahmas.org/studio-closed.conf`:
+v2, root 644, 273 bytes, sha256 `611022ab…9eb22dd`. `supabase.conf` beside it is
+unchanged (`78266462…a2ace3`).
+
+**Left in `/root` on purpose:** `growth-studio-closed.conf` (v1, the version
+without the `ErrorDocument` line) and `growth-studio-closed-v2.conf` (the tested
+copy of what is live).
+
+**Lesson for enroll, or any instance restricted this way.** cPanel's global
+`ErrorDocument 4xx /4xx.shtml` pages are local URLs, and a catch-all
+`ProxyPass /` forwards them to the backend. Denying at Apache without
+`ErrorDocument 403 default` still hands the client the backend's reply, here
+Envoy's basic-auth prompt. The `AH01630` lines say "denied" while the client
+gets a `401`: check Studio's headers (`server:` and the realm), not only the
+error log.
+
+#### Rolling step 3 back, or opening Studio to one address
+
+Neither has been run.
+
+- **Undo entirely:** `rm` the file, then `apachectl configtest && apachectl
+  graceful`. The `*.conf` glob still matches `supabase.conf`, so this never
+  leaves an `Include` that matches nothing. Studio returns to basic auth only.
+- **Allow one proven-stable address:** in a v3 of the file, replace
+  `Require all denied` with `Require ip <address>`. Keep
+  `ErrorDocument 403 default`. Go through the same stage, hash, `-c` syntax
+  test, `\cp` install (root's `cp` is `cp -i`), gated reload and checks. The
+  allowed address still meets Envoy's login.

@@ -1,6 +1,6 @@
 # growth.lilbrahmas.org — deploy kit
 
-**Status: git, DNS, cPanel and SSL are done. The Supabase stack is complete: running, isolated from enroll, registered as instance 2, and public at https://api.growth.lilbrahmas.org since 14 Sep 2026. Its database is empty. The serving design was decided on 14 Sep 2026 (step 1). Step 2, data route and scope, was done on 15 Sep 2026: the copy goes through Lovable Cloud's SQL editor as JSON (`MIGRATION-RECORD.md`).** Nine steps remain, one conversation each: see *Remaining steps*.
+**Status: git, DNS, cPanel and SSL are done. The Supabase stack is complete: running, isolated from enroll, registered as instance 2, and public at https://api.growth.lilbrahmas.org since 14 Sep 2026. Its database is empty. The serving design was decided on 14 Sep 2026 (step 1). Step 2, data route and scope, was done on 15 Sep 2026: the copy goes through Lovable Cloud's SQL editor as JSON (`MIGRATION-RECORD.md`). Step 3 closed Studio to every address on 15 Sep 2026.** Eight steps remain, one conversation each: see *Remaining steps*.
 
 This folder is the deploy kit for the second app on the VPS. It is deliberately
 thin right now — most of enroll's documents are records of a migration that has
@@ -29,7 +29,7 @@ written when the work it describes actually happens.
 | ✅ **cPanel** | one account `growthlilbrahmas` owns both hostnames, enroll's shape. `api.growth.lilbrahmas.com` was created by mistake and has been terminated |
 | ✅ **DNS** | both names resolve to `184.168.122.104`, authoritatively and publicly |
 | ✅ **SSL** | one Let's Encrypt SAN cert covers both hostnames, valid to 11 Dec 2026 |
-| ✅ **Supabase stack** | running since ~07:05 UTC 13 Sep 2026 at `/opt/supabase/stacks/growth`: 11/11 healthy, ports 8010 / 5442 / 6553 on loopback only, keys and tokens proven isolated from enroll, enroll and coturn verified undisturbed. Empty database — no migrations applied. Registered as `growth = instance 2` in `/opt/supabase/README.md`. **Public since 14 Sep 2026** at `https://api.growth.lilbrahmas.org` through Apache (runbook §8–§9 verified): GoTrue, WebSocket and the ACME renewal path work through the proxy, Studio asks for its basic-auth login, and enroll and coturn were verified undisturbed |
+| ✅ **Supabase stack** | running since ~07:05 UTC 13 Sep 2026 at `/opt/supabase/stacks/growth`: 11/11 healthy, ports 8010 / 5442 / 6553 on loopback only, keys and tokens proven isolated from enroll, enroll and coturn verified undisturbed. Empty database — no migrations applied. Registered as `growth = instance 2` in `/opt/supabase/README.md`. **Public since 14 Sep 2026** at `https://api.growth.lilbrahmas.org` through Apache (runbook §8–§9 verified): GoTrue, WebSocket and the ACME renewal path work through the proxy, Studio asked for its basic-auth login, and enroll and coturn were verified undisturbed. **Studio closed to every address since 15 Sep 2026** (step 3): Apache answers `403`, and the API paths and ACME stay public |
 | 🟡 **`.env.production.local`** | decided in step 1 (open question 3): build-time `VITE_*` only, as enroll. Not created yet — step 6 |
 | 🟡 **Serving** | ✅ design decided 14 Sep 2026 (step 1): bun build via `NITRO_PRESET`, port `3010` on loopback, enroll's env pattern, `pg_cron` enabled, AI features pending. Nothing built on the server yet — steps 6 and 7 |
 | ✅ **Data route and scope** | decided 15 Sep 2026 (step 2): Lovable Cloud's SQL editor, one JSON document per table, keeping all 40 users' passwords. Scope snapshot: 180 tables (120 with rows), 11,980 rows, 40 users, 4 storage files, ~9.7 MB as JSON. Nothing imported yet — step 5 |
@@ -242,8 +242,10 @@ The evidence is in `STACK-PROVISIONING.md` §5.
 
 ## Next step
 
-**Steps 1 and 2 are done** (14 and 15 Sep 2026). Next: step 3 has no
-prerequisites, and step 4's prerequisites (1 and 2) are both met.
+**Steps 1, 2 and 3 are done** (14–15 Sep 2026). Next: step 4, whose
+prerequisites (1 and 2) are met. Step 9 has none. Step 5 waits on 4.
+The latest host snapshot is from **15 Sep 2026, 08:54 UTC**, re-checked unchanged
+at 10:46 after step 3's reloads (`STACK-PROVISIONING.md` §6).
 Nothing on the app side has been built on the server.
 
 **The baseline below was captured on 12 Sep 2026** — recorded values are in
@@ -277,7 +279,7 @@ steps 2 and 6 start).
 |---|---|---|---|
 | 1 | ✅ Serving design decisions — done 14 Sep 2026 | — | workstation, Lovable |
 | 2 | ✅ Data route and migration scope — done 15 Sep 2026 | — | Lovable Cloud, read-only |
-| 3 | Restrict Studio | — | server, Apache |
+| 3 | ✅ Restrict Studio — done 15 Sep 2026 | — | server, Apache |
 | 4 | Apply the migrations | 1, 2 | server |
 | 5 | Rehearsal data import | 2, 3, 4 | server |
 | 6 | `deploy-growth` and the app container | 1, 4 | server |
@@ -352,6 +354,23 @@ basic auth only. enroll has the same exposure.
 
 **Done when** Studio refuses a request from an address not on the list, and
 steps 45–47 of the adding-instance runbook still pass.
+
+✅ **Done 15 Sep 2026: Studio is closed to every address.** Four unrelated
+addresses had tried its login on 14 Sep, and the operator's mobile hotspot
+cannot go on an allow-list, so the list starts empty. A new
+`studio-closed.conf` beside `supabase.conf` makes Apache answer `403` for
+everything except `/auth/v1/`, `/rest/v1/`, `/realtime/v1/`, `/storage/v1/` and
+`/.well-known/`.
+- **What the first attempt showed:** it still returned Envoy's login prompt,
+  because cPanel's global `ErrorDocument 403 /403.shtml` was forwarded through
+  `ProxyPass /`. `ErrorDocument 403 default` fixed it.
+- **Verified:** runbook steps 45–47, `/rest/v1/` and `/storage/v1/`, and seven
+  attempts to get past the rule. Enroll and coturn are undisturbed.
+- **Enroll's Studio is still public behind its login.** That is a separate
+  decision (`enroll/LAUNCH-CHECKLIST.md` item 8).
+
+Rollback, and how to allow one address later, are in
+`STACK-PROVISIONING.md` §6.
 
 ### 4. Apply the migrations
 
@@ -474,8 +493,8 @@ after a reboot.
 
 Open with this, filling in the step number:
 
-> Read growth/README.md and growth/STACK-PROVISIONING.md, then do step N of
-> *Remaining steps*. Constraints that are load-bearing, not stylistic:
+> Read growth/README.md, growth/STACK-PROVISIONING.md and
+> growth/MIGRATION-RECORD.md, then do step N of *Remaining steps*. Constraints that are load-bearing, not stylistic:
 >
 > - Root SSH is disabled. I run every command in WHM → Terminal and paste the
 >   output back.
