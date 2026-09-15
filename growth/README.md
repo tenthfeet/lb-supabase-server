@@ -1,6 +1,6 @@
 # growth.lilbrahmas.org — deploy kit
 
-**Status: git, DNS, cPanel and SSL are done. The Supabase stack is complete: running, isolated from enroll, registered as instance 2, and public at https://api.growth.lilbrahmas.org since 14 Sep 2026. Its database is empty. The serving design was decided on 14 Sep 2026 (step 1). Step 2, data route and scope, was done on 15 Sep 2026: the copy goes through Lovable Cloud's SQL editor as JSON (`MIGRATION-RECORD.md`). Step 3 closed Studio to every address on 15 Sep 2026.** Eight steps remain, one conversation each: see *Remaining steps*.
+**Status: git, DNS, cPanel and SSL are done. The Supabase stack is complete: running, isolated from enroll, registered as instance 2, and public at https://api.growth.lilbrahmas.org since 14 Sep 2026. Its database has growth's schema and no data. The serving design was decided on 14 Sep 2026 (step 1). Step 2, data route and scope, was done on 15 Sep 2026: the copy goes through Lovable Cloud's SQL editor as JSON (`MIGRATION-RECORD.md`). Step 3 closed Studio to every address on 15 Sep 2026. Step 4 applied the schema on 15 Sep 2026: all 264 migrations in the ledger (5 not run and 2 cut to their schema lines, by decision), matching `types.ts`, both audits clean (`MIGRATION-RECORD.md` §6).** Seven steps remain, one conversation each: see *Remaining steps*.
 
 This folder is the deploy kit for the second app on the VPS. It is deliberately
 thin right now — most of enroll's documents are records of a migration that has
@@ -10,7 +10,8 @@ already happened, and growth's has not. What exists here is what is true.
 |---|---|
 | `GIT-SETUP.md` | The completed git work: deploy key, ssh alias, clone. Also the template for instance 3. |
 | `STACK-PROVISIONING.md` | The Supabase stack work: what is done, the baseline to verify against, and where the runbook diverges for growth. |
-| `MIGRATION-RECORD.md` | Moving the data: route, scope, and later the import and cutover. Started by step 2. |
+| `MIGRATION-RECORD.md` | Moving the data: route, scope, the schema apply (step 4), and later the import and cutover. Started by step 2. |
+| `apply-migrations.sh` | Step 4's build of the schema from empty, pinned to `df414acf`. Kept as the record of what ran. Later migrations belong to `deploy-growth`. |
 | `README.md` | This file. Where things stand and what the next decision is. |
 
 Everything else — `OPERATIONS.md`, `deploy-growth`, the migration record — gets
@@ -29,10 +30,11 @@ written when the work it describes actually happens.
 | ✅ **cPanel** | one account `growthlilbrahmas` owns both hostnames, enroll's shape. `api.growth.lilbrahmas.com` was created by mistake and has been terminated |
 | ✅ **DNS** | both names resolve to `184.168.122.104`, authoritatively and publicly |
 | ✅ **SSL** | one Let's Encrypt SAN cert covers both hostnames, valid to 11 Dec 2026 |
-| ✅ **Supabase stack** | running since ~07:05 UTC 13 Sep 2026 at `/opt/supabase/stacks/growth`: 11/11 healthy, ports 8010 / 5442 / 6553 on loopback only, keys and tokens proven isolated from enroll, enroll and coturn verified undisturbed. Empty database — no migrations applied. Registered as `growth = instance 2` in `/opt/supabase/README.md`. **Public since 14 Sep 2026** at `https://api.growth.lilbrahmas.org` through Apache (runbook §8–§9 verified): GoTrue, WebSocket and the ACME renewal path work through the proxy, Studio asked for its basic-auth login, and enroll and coturn were verified undisturbed. **Studio closed to every address since 15 Sep 2026** (step 3): Apache answers `403`, and the API paths and ACME stay public |
+| ✅ **Supabase stack** | running since ~07:05 UTC 13 Sep 2026 at `/opt/supabase/stacks/growth`: 11/11 healthy, ports 8010 / 5442 / 6553 on loopback only, keys and tokens proven isolated from enroll, enroll and coturn verified undisturbed. Schema applied 15 Sep 2026 (step 4), no data. Registered as `growth = instance 2` in `/opt/supabase/README.md`. **Public since 14 Sep 2026** at `https://api.growth.lilbrahmas.org` through Apache (runbook §8–§9 verified): GoTrue, WebSocket and the ACME renewal path work through the proxy, Studio asked for its basic-auth login, and enroll and coturn were verified undisturbed. **Studio closed to every address since 15 Sep 2026** (step 3): Apache answers `403`, and the API paths and ACME stay public |
 | 🟡 **`.env.production.local`** | decided in step 1 (open question 3): build-time `VITE_*` only, as enroll. Not created yet — step 6 |
 | 🟡 **Serving** | ✅ design decided 14 Sep 2026 (step 1): bun build via `NITRO_PRESET`, port `3010` on loopback, enroll's env pattern, `pg_cron` enabled, AI features pending. Nothing built on the server yet — steps 6 and 7 |
 | ✅ **Data route and scope** | decided 15 Sep 2026 (step 2): Lovable Cloud's SQL editor, one JSON document per table, keeping all 40 users' passwords. Scope snapshot: 180 tables (120 with rows), 11,980 rows, 40 users, 4 storage files, ~9.7 MB as JSON. Nothing imported yet — step 5 |
+| ✅ **Schema** | step 4, 15 Sep 2026: 264 migrations in `supabase_migrations.schema_migrations` at `df414acf`. 5 were not run and 2 were cut to their schema lines, because they edit content that only production has. 180 tables, 2,294 columns and 77 functions match `types.ts`. RLS on all 180, GRANT audit clean. `pg_cron` created, so all 7 source extensions are present at identical versions. 7 private buckets. `attendance-roll-day` unscheduled before it ever ran. `MIGRATION-RECORD.md` §6 |
 
 ---
 
@@ -118,10 +120,13 @@ step 4 would stop at the first of them. Still no `CREATE EXTENSION`, no `pg_net`
 schedules `attendance-roll-day` daily at 19:15 UTC as a `net.http_post` to the
 **Lovable-hosted app's** hook URL, with Lovable Cloud's anon key. Applying it
 needs only `pg_cron`. Left as it is on the VPS, it either calls Lovable's app
-or fails nightly, depending on whether growth's stack has `pg_net` (unchecked).
+or fails nightly, depending on whether growth's stack has `pg_net`. **It has**
+(0.20.3, checked in step 4), so it would call Lovable's app.
 A second HTTP job, `dwr-shift-cutoff-nudge` (every 15 minutes), exists **only in
 Lovable Cloud**. No migration creates it, so DWR nudges stop at cutover unless
-something replaces it. Step 4 handles both. Details in `MIGRATION-RECORD.md` §1.
+something replaces it. Step 4 unscheduled `attendance-roll-day` on growth before
+its first run. Both hook routes move to step 7's host cron, so neither runs on
+the VPS until then. Details in `MIGRATION-RECORD.md` §1 and §6.
 
 The server needs four variables: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
 `SUPABASE_PUBLISHABLE_KEY`, `LOVABLE_API_KEY`. **The last will not be available
@@ -242,10 +247,10 @@ The evidence is in `STACK-PROVISIONING.md` §5.
 
 ## Next step
 
-**Steps 1, 2 and 3 are done** (14–15 Sep 2026). Next: step 4, whose
-prerequisites (1 and 2) are met. Step 9 has none. Step 5 waits on 4.
-The latest host snapshot is from **15 Sep 2026, 08:54 UTC**, re-checked unchanged
-at 10:46 after step 3's reloads (`STACK-PROVISIONING.md` §6).
+**Steps 1–4 are done** (14–15 Sep 2026). Steps 5, 6 and 8 now have their
+prerequisites. Step 9 has none.
+The latest host snapshot is from **15 Sep 2026, 12:25 UTC**, re-checked unchanged
+at 13:38 after step 4 (`MIGRATION-RECORD.md` §6).
 Nothing on the app side has been built on the server.
 
 **The baseline below was captured on 12 Sep 2026** — recorded values are in
@@ -280,7 +285,7 @@ steps 2 and 6 start).
 | 1 | ✅ Serving design decisions — done 14 Sep 2026 | — | workstation, Lovable |
 | 2 | ✅ Data route and migration scope — done 15 Sep 2026 | — | Lovable Cloud, read-only |
 | 3 | ✅ Restrict Studio — done 15 Sep 2026 | — | server, Apache |
-| 4 | Apply the migrations | 1, 2 | server |
+| 4 | ✅ Apply the migrations — done 15 Sep 2026 | 1, 2 | server |
 | 5 | Rehearsal data import | 2, 3, 4 | server |
 | 6 | `deploy-growth` and the app container | 1, 4 | server |
 | 7 | Apache proxy for growth.lilbrahmas.org | 6 | server, Apache |
@@ -393,6 +398,28 @@ and 2 (the migration count).
 **Done when** every migration is in the ledger, the schema matches `types.ts`, and
 both audits pass or their exceptions are written down.
 
+✅ **Done 15 Sep 2026.** `growth/apply-migrations.sh`, pinned to `df414acf`
+(264 migrations), built the schema from empty. It uses enroll's apply logic:
+one transaction per file and its ledger row, `ON_ERROR_STOP`, and a guarded
+resume.
+- **What the first run showed:** it stopped at file 26 and rolled it back. Some
+  migrations also edit content (a knowledge-base entry, training pages, DWR
+  template fields, test users) against rows that production created through the
+  app, so on an empty database a foreign key refuses them.
+- **Decided:** 5 such files are not run, and 2 mixed files run only their
+  schema lines. Each has a ledger note. The content comes with step 5's import.
+- **Verified:**
+  - `ledger rows: 264 of 264`
+  - tables, columns and functions match `types.ts`
+  - RLS on for all 180 tables with 0 audit rows, and 0 GRANT audit rows
+  - `pg_cron` created, and the extensions match the source's
+  - 7 private buckets, not listable with the publishable key
+  - `attendance-roll-day` unscheduled, with `pg_net` never having queued a
+    request
+  - enroll and coturn undisturbed
+- **Inherited by steps 5–7**, listed in their bullets below and in
+  `MIGRATION-RECORD.md` §6.
+
 ### 5. Rehearsal data import
 
 Prove the import end to end on a copy. Cutover repeats it for real. **Needs** 2, 3
@@ -407,6 +434,14 @@ and 4.
   `MIGRATION-RECORD.md` §5). Storage objects too, if step 2 found any.
 - Signups in both directions: public signup refused, admin-created users still
   work (`STACK-PROVISIONING.md` §3.7, never tested).
+- From step 4:
+  - 61 migrations left seed rows, so count per table before importing and clear
+    or replace what would collide.
+  - The content from the 5 skipped and 2 cut statements arrives only through
+    this import.
+  - Decide about the source's 8 test accounts (`…@lilbrahmas.local`) before
+    importing users: they may still have the password written in the repo.
+  - Three `pg_cron` jobs are active.
 
 **Done when** row counts match step 2's scope and the import is a repeatable
 script.
@@ -426,6 +461,12 @@ The app running on the VPS. **Needs** 1 and 4.
   `.output/nitro.json` says `"bun"`. Refuse without `.env.production.local`, and
   if `hwchtywjbmcvpucidfmy` is in `.output/public` or `.output/server`. Start Bun
   with `--no-env-file`. Re-check port 3010 is free just before binding it.
+- From step 4: `deploy-growth` takes over the ledger in
+  `supabase_migrations.schema_migrations` (enroll's columns plus `note`). Growth
+  has no `.applied-migrations` file. A new migration can again edit content
+  against production rows, so a failure there is a decision, not a retry. After
+  every apply, stop unless no `cron.job` command calls `lovable.app` or
+  `net.http`.
 
 **Done when** the container comes back healthy after a restart, and a new
 `OPERATIONS.md` describes deploying.
@@ -438,6 +479,9 @@ The frontend hostname serves the app. **Needs** 6.
   `ProxyPass /.well-known/ !` first: one certificate covers both hostnames.
 - Block `/api/public/hooks/` from outside, and call the two hook routes from a
   host cron job over loopback (`STACK-PROVISIONING.md` §3.5).
+- From step 4: this replaces both HTTP jobs, and neither runs on the VPS until
+  it exists. `attendance-roll-day` runs daily at 19:15 UTC (00:45 IST); the
+  route defaults to yesterday in IST. `dwr-nudge` runs every 15 minutes.
 
 **Done when** runbook step 48 shows the app's page title and the ACME probe passes
 on both hostnames.

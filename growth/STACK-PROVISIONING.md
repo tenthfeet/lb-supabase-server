@@ -23,7 +23,7 @@ happens; what is written here has been run and verified unless marked otherwise.
 | ✅ GoDaddy DNS | both names resolve to `184.168.122.104` authoritatively **and** publicly |
 | ✅ ACME path proven | probe files fetched over plain HTTP from both hostnames |
 | ✅ SSL issued | Let's Encrypt, `ssl_verify=0` on both, valid to **11 Dec 2026** |
-| ✅ Stack | running at `/opt/supabase/stacks/growth` since ~07:05 UTC 13 Sep 2026 — 11/11 healthy, ports on loopback only, keys and tokens proven isolated from enroll, enroll and coturn verified undisturbed. See §4. Empty database, no migrations applied |
+| ✅ Stack | running at `/opt/supabase/stacks/growth` since ~07:05 UTC 13 Sep 2026 — 11/11 healthy, ports on loopback only, keys and tokens proven isolated from enroll, enroll and coturn verified undisturbed. See §4. Schema applied 15 Sep 2026, no data (README step 4, `MIGRATION-RECORD.md` §6) |
 | ✅ Apache reverse proxy | `https://api.growth.lilbrahmas.org` → `127.0.0.1:8010` since 14 Sep 2026. Verified through the proxy at 05:19 UTC: GoTrue `200` with the key, WebSocket `101` after 5 s, ACME probe `200` over HTTP and HTTPS, Studio `401` asking for basic auth. enroll and coturn verified undisturbed. See §4 |
 | ✅ Studio closed | since 15 Sep 2026 (README step 3): `studio-closed.conf` beside `supabase.conf`. Studio answers `403` from Apache to every address, with no login prompt; the four API prefixes and `/.well-known/` stay public. Runbook steps 45–47 pass, and enroll and coturn were verified undisturbed. See §6 |
 | ✅ Serving design for the app | decided 14 Sep 2026 (README step 1) — see `README.md` *Open questions*; evidence in §5 |
@@ -594,7 +594,9 @@ below. Step 48 cannot pass until the app is served.
    it must carry `ProxyPass /.well-known/ !` too — one SAN certificate covers
    both names (§1).
 7. Not this runbook: step 49's RLS audit only means something after growth's
-   226 migrations are applied — deploy-kit work.
+   226 migrations are applied — deploy-kit work. ✅ Run in README step 4,
+   15 Sep 2026, after all 264: RLS on for all 180 tables, 0 audit rows, 0 GRANT
+   audit rows (`MIGRATION-RECORD.md` §6).
 8. ✅ **Decided 14 Sep 2026: the API docroot `.htaccess` gets `RewriteEngine Off`**,
    appended below cPanel's marked blocks at 04:59 UTC. The parent `.htaccess`
    has no rewrites today, so this changes nothing now. It stops any rewrite later

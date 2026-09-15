@@ -1,0 +1,2 @@
+# Shell scripts run on the Linux server, and their sha256 is pinned there.
+*.sh text eol=lf

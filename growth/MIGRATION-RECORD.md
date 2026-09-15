@@ -87,7 +87,8 @@ Lovable Cloud. It calls `project--f44cdfc8-….lovable.app/api/public/hooks/dwr-
   command as text. `net.http_post` is looked up only when the job runs.
 - **`attendance-roll-day` on the VPS, as written, is wrong either way.** It calls
   **Lovable's** app if growth's stack has `pg_net`, and fails every night if not.
-  Whether growth's stack already has `pg_net` installed has **not been checked**.
+  ✅ **Growth's stack has `pg_net` 0.20.3** (step 4, 15 Sep 11:09 UTC), so as
+  written it calls Lovable's app (§6).
 - **`dwr-shift-cutoff-nudge` will not exist on the VPS.** Replaying the
   migrations does not create it, so at cutover DWR nudges stop and nothing
   reports it.
@@ -465,3 +466,272 @@ the import: the workstation's, the one under `/home`, and the server's.
 - All 30 `employee_documents` rows point at files that do not exist (§3).
 - `dwr-shift-cutoff-nudge` exists only in the database, not in any migration
   (§1).
+
+---
+
+## 6. Step 4: apply the migrations: ✅ done 15 Sep 2026
+
+### Read on the workstation first: 15 Sep 2026
+
+`git fetch` at ~11:15 UTC: HEAD `df414acf`, equal to `origin/main`, **264**
+migrations, newest `20260915081117_*`.
+
+- **Two migrations cannot replay.** `20260726090058_*` and `20260726090647_*`
+  seed 8 test accounts (`…@lilbrahmas.local`) with one password written into
+  the repo. They attach them by fixed ID to a department (`386ee13b…`), org
+  unit, shift, week-off pattern and holiday calendar. No migration creates those
+  5 rows: Lovable Cloud got them through the app. `profiles.department_id`
+  references `departments` (`20260704130552_*` line 35), so the first insert
+  fails. No later migration drops that constraint, and no migration inserts
+  any department. ✅ **Decided 15 Sep 2026: skip both**, each recorded in the
+  ledger with a note saying it was not run. The reasons:
+  - they fail on an empty database
+  - they are test data, not schema, and would leave 8 logins with a published
+    password
+  - step 5 copies the source's real users, these included if they still exist
+  - the two later files that name the seed, `20260726093044_*` and
+    `20260726111046_*`, only update or copy rows they find, so on an empty
+    database they match nothing
+- **The other 31 UUID literals** are updates, deletes and lookups of content
+  rows. On an empty database they match nothing and do not fail.
+- **6 files run `ALTER TYPE … ADD VALUE`**, and none uses the new value in the
+  same file. They are applied outside a transaction, as enroll's `deploy.sh`
+  (`tx_hostile`) does.
+- **61 files insert rows** (`page_blocks`, `content_nodes`, `user_roles`, …).
+  Step 5's import meets rows the migrations already put there.
+- `crypt` and `gen_salt` appear only in the two seed files. `gen_random_bytes`
+  is a column default in `20260704135430_*`, so pgcrypto must resolve at apply
+  time.
+- Still zero `CREATE EXTENSION` and zero `storage.buckets`. `net.http_post` is
+  only in `20260914120009_*`. `cron.` is in 4 files.
+
+### Progress
+
+| Step | What | Result |
+|---|---|---|
+| 1 | read-only: server checkout, growth health, database state and extensions | ✅ 11:09 UTC. Checkout `c496de2e`, 224 migrations, `dirty: 0`. Growth `11 healthy: 11`. `public tables: 0`, `ledger schema tables: 0`, `buckets: 0`, `auth users: 0`, `cron schema: 0`. `cron.database_name: postgres`. search_path `"$user", public, extensions`, so pgcrypto resolves. `supabase_realtime` publication: 1 |
+| 2 | server checkout: `git fetch origin && git merge --ff-only df414acf`, then HEAD, `origin/main`, dirty count, file count and the migrations tree ID | ✅ `head: df414acf origin: df414acf dirty: 0 migrations: 264 tree: f28ddded7cb1`. The same tree ID as the workstation, so the server has the same 264 files byte for byte, and Lovable had pushed nothing newer |
+| 3 | host snapshot before the first write: the three reusable checks of `STACK-PROVISIONING.md` §4 in one line | ✅ 12:25 UTC, identical to 08:54. coturn `MainPID=1911360` since `2026-08-26 00:46:34 UTC`; missing `0`; relay `32768 49151`; `REDIRECT 1`; `removed: 0 added: 25 added-not-on-growth-bridge: 3` with the three loopback `DROP` lines; networks `bridge,enroll_default,growth_default,host,none`; enroll `11 healthy: 11`, API `401`. Growth `11 healthy: 11`; `iptables changes since the preproxy copy: 0`; `growth listeners: 3 of 3` on `127.0.0.1` |
+| 4 | `CREATE EXTENSION pg_cron` (no `IF NOT EXISTS`, `ON_ERROR_STOP`), then facts only | ✅ ~12:30 UTC. `CREATE EXTENSION`; `pg_cron: 1.6.4@pg_catalog`, the source's version; `cron tables: 2`; `cron jobs: 0`; `postgres usage on cron: true`; `scheduler processes: 1`; `public tables: 0`. `postgres superuser: false`, as on hosted Supabase, where Lovable's migrations also run as `postgres`. No config change, no restart. Rollback while no job exists: `DROP EXTENSION pg_cron` |
+| 5 | script uploaded through cPanel File Manager to `/home/growthlilbrahmas/`, then `test ! -e` target `&&` `mv` to `/root/growth-apply-migrations.sh` `&&` `chown root:root` `&&` `chmod 700` `&&` size, CR count and an `awk` sha256 comparison | ✅ 12:30 UTC. `-rwx------ root root 11748`; `lines: 236 bytes: 11748 CR bytes: 0`; `sha256 matches workstation: yes` |
+| 6 | `bash /root/growth-apply-migrations.sh --plan` | ✅ 12:32:45 UTC, exactly as expected: `checkout: tree f28ddded7cb1, 264 files, clean`; `database: pg_cron installed, public tables 0, ledger rows 0`; `pending: 264 = atomic 256 + not atomic 6 + skipped 2`; the six not-atomic versions and the two to skip, as on the workstation; `plan only: nothing written` |
+| 7 | `bash /root/growth-apply-migrations.sh --apply` | ⚠️ 12:34:40 UTC. Files 1–25 applied and ledgered (one of them, `20260705104630`, not atomic). **File 26, `20260705175005_*`, failed and was rolled back:** `insert or update on table "kb_entries" violates foreign key constraint "kb_entries_department_id_fkey"`, `Key (department_id)=(54c8a7ba-54bd-4c92-8db7-30e3e378c618) is not present in table "departments"`. The script stopped as designed. Nothing from file 26 applied |
+| 8 | v2 uploaded through File Manager, then: installed sha256 must equal v1 (`awk` exit gate) `&&` `\mv` over it (root's `mv` is `mv -i`) `&&` `chown`/`chmod 700` `&&` size, CR count, sha256 against v2 | ✅ 13:11 UTC. `installed file is v1: yes`; `-rwx------ root root 14524`; `lines: 273 bytes: 14524 CR bytes: 0`; `sha256 matches v2: yes` |
+| 9 | `--plan` with v2, against the 25 applied | ✅ 13:23:31 UTC, exactly as expected: `public tables 41` (equal to the `CREATE TABLE` count of files 1–25), `ledger rows 25`, `pending: 239 = atomic 227 + not atomic 5 + schema lines only 2 + skipped 5`, and the same three lists as the mock |
+| 10 | `--apply` with v2, resuming at file 26 | ✅ 13:24:22 UTC. `h` first, marks where the mock put them, no failure. `NOTIFY pgrst sent`; `pgrst event triggers: 2 of 2`; `this run: atomic 227, not atomic 5, schema lines only 2, skipped 5`; **`ledger rows: 264 of 264, with a note: 7`**; **`public tables: 180`**, the number in `types.ts`; `done: every migration is in the ledger`. Cron jobs: 1 `escalate-stale-approvals` `15 * * * *`, 2 `auto-generate-leave-delegations` `30 0 * * *`, 4 `renew-monthly-incentive-plans` `35 0 * * *` (jobid 3 went when the second of its two migrations re-created it), all `calls lovable.app: false`; **5 `attendance-roll-day` `15 19 * * *`, `calls lovable.app: true`** |
+| 11 | `cron.unschedule('attendance-roll-day')`, then counts and names only | ✅ ~13:35 UTC, well before its 19:15 run. `unscheduled: true`; `jobs: 3, calling lovable.app: 0, using net.http: 0`; jobs 1, 2 and 4 as above; `runs so far: 0`; `pg_net queued: 0, responses: 0`, so nothing was ever sent to Lovable's app. Unscheduled rather than repointed: step 7's host cron over loopback replaces it (and `dwr-shift-cutoff-nudge`), there is no app on the VPS to call before step 6, and the database container cannot reach the host's loopback |
+| 12 | one `INSERT` of the 7 buckets into `storage.buckets`, the source's settings (§1); then each bucket's settings and the `storage.objects` policies naming it; then `GET /storage/v1/bucket` on `127.0.0.1:8010` with the service key and with the publishable key, keys read from `.env` into the header | ✅ `INSERT 0 7`. All 7 `public false`, `mime any`, `limit none`, except `call-audits` `limit 52428800`. Object policies naming each: `admission-payments` 5, `call-audits` 3, `chat-attachments` 3, `employee-documents` 4, `hr-letters` 4, `lms-media` 4, `org-photos` 4. Storage API with the service key lists all 7; **with the publishable key `[]`**, so the buckets cannot be listed with the key that ships in the browser |
+| 13 | schema against `types.ts` at `df414acf`: the same name list built from growth's database (`table:`, `col:`, `func:` for `public`; tables and partitioned tables; live columns; functions excluding trigger and event-trigger functions), `LC_ALL=C sort -u`, saved to `/root/growth-schema-fingerprint.txt`, and sha256 prefixes compared with the workstation's, tables+columns (`fd53a079ac32dee1`) and functions (`9cc3ef066d7de79e`) separately | ✅ `server: table 180 col 2294 func 77`; **`tables+columns match types.ts: yes`**; **`functions match types.ts: yes`**. Every table, column and function name that Lovable's generator sees in production exists on growth, and nothing extra, despite the 5 files skipped and 2 cut |
+| 14 | enroll's RLS audit (tables with RLS off or no policy, with `anon` / `authenticated` `SELECT`) and GRANT audit (tables `service_role` cannot `SELECT`), with totals | ✅ **`public tables: 180, rls on: 180`**, `rls forced: 0`. **`rls audit rows: 0`**: every table has RLS on and at least one policy. **`grant audit rows: 0`**: `service_role` reaches every table. No exceptions to write down |
+| 15 | nothing disturbed: the reusable host check, growth health, the checks through the proxy, and the firewall against the preproxy copy, as in step 3 | ✅ 13:38 UTC, identical to 12:25. coturn `MainPID=1911360` since `2026-08-26 00:46:34 UTC`; missing `0`; relay `32768 49151`; `REDIRECT 1`; `removed: 0 added: 25 added-not-on-growth-bridge: 3` with the three loopback `DROP` lines; networks unchanged; enroll `11 healthy: 11`, API `401`. Growth `11 healthy: 11`; GoTrue `[200]`; `websocket: 101 after 5.000896s`; Studio `HTTP/2 403`, `studio header lines: 1`; `iptables changes since the preproxy copy: 0`; the three listeners on `127.0.0.1` (the pasted last line lost its final `3`, a copy drop) |
+
+**What the audits do not prove.** They show every table is guarded and
+reachable by the server. They do not show each policy is *right*: a policy
+granting too much still passes. Step 10 checks from outside, with the
+publishable key taken from the deployed app, that protected tables return `[]`.
+`rls forced: 0` means the table owner (`postgres`) bypasses RLS. That does not
+affect `anon`, `authenticated` or `service_role` through the API, and it is
+Lovable's shape in production too.
+
+### Step 4 is complete
+
+**Done when** every migration is in the ledger, the schema matches `types.ts`,
+and both audits pass or their exceptions are written down. All three hold:
+- `ledger rows: 264 of 264`, 7 of them with a note
+- tables, columns and functions match `types.ts` by name
+- RLS audit 0 rows, GRANT audit 0 rows
+
+Also done in this step:
+- **Extensions:** `pg_cron` 1.6.4 created, so growth now has the source's
+  seven extensions at identical versions. `pg_net` 0.20.3 was already there.
+- **`attendance-roll-day`:** unscheduled before its first run, and `pg_net`
+  never queued a request.
+- **Buckets:** the 7 private buckets exist, with the source's settings.
+- **Host:** enroll and coturn undisturbed.
+
+**Not done here, by design:** `dwr-shift-cutoff-nudge` and
+`attendance-roll-day` are replaced by step 7's host cron over loopback. Until
+then neither hook runs on the VPS, which matters only once users move (step 10).
+
+**Left on the server:**
+- `/root/growth-apply-migrations.sh` (v2, sha256 `8e628675…6c31f51`), the record
+  of what ran
+- `/root/growth-schema-fingerprint.txt`, names only
+- `/opt/supabase/stacks/growth/.migrations.lock`, empty, the script's lock
+
+Growth's script writes no `.applied-migrations` mirror. The ledger is only in
+the database.
+
+### What later steps inherit from step 4
+
+- **Step 5, rows already present.** 61 migrations insert rows (`page_blocks`,
+  `content_nodes`, `user_roles`, `dwr_templates`, `price_*`, …), so the import
+  meets rows it did not bring. Count rows per table before importing. Parents
+  first with IDs kept will collide with these seeds unless they are cleared or
+  replaced.
+- **Step 5, the source's content arrives by import.** That covers everything
+  the 5 skipped and 2 cut statements would have written: the `kb_entries` row,
+  training pages and blocks, and DWR template fields.
+- **Step 5 (and 10), the test accounts.** The 8 test accounts
+  (`…@lilbrahmas.local`) are not on growth. If the source still has them,
+  importing users brings them with whatever password they have, possibly the
+  one written in the repo. Decide before importing. Checking by count only,
+  without printing anything, is possible in the SQL editor with
+  `crypt(<password>, encrypted_password) = encrypted_password`.
+- **Step 5, cron jobs.** Three jobs are active against empty tables:
+  `escalate-stale-approvals` (hourly at :15), `auto-generate-leave-delegations`
+  (00:30) and `renew-monthly-incentive-plans` (00:35). Pause them for the
+  import, as planned.
+- **Step 6, the ledger.** `deploy-growth` takes over
+  `supabase_migrations.schema_migrations`: enroll's columns plus `note`, keyed
+  on the timestamp prefix. The first migration after `df414acf` is its first
+  real apply.
+  - Each new migration can carry the same two problems found here: content
+    against production rows, and a `cron.schedule` that calls `lovable.app` or
+    `net.http`.
+  - After every apply, `deploy-growth` should print `cron.job` rows calling
+    `lovable.app` or `net.http`, and stop unless the count is 0.
+- **Step 7, the hooks.** Host cron for `attendance-roll-day` (daily 19:15 UTC,
+  00:45 IST; the route defaults to yesterday in IST) and `dwr-nudge` (every 15
+  minutes), over loopback.
+
+### Migrations that depend on production rows (found after step 7)
+
+**Root cause.** Some of Lovable's migrations also edit content: knowledge-base
+entries, training pages, DWR template fields. Those edits point at rows that
+were created in production through the app, not by any migration. On an empty
+database the foreign key refuses them.
+
+**The workstation scan missed this one.** It classified each UUID by its
+*first* use, and `54c8a7ba…` is first used inside a function body. Every use of
+every UUID literal was then reviewed, along with name-based lookups
+(`SELECT id INTO … WHERE code/name/title …`):
+
+| File | Schema in it | Fails on an empty database because |
+|---|---|---|
+| `20260705175005_*` | yes: creates `kb_languages`, `kb_entries` (lines 1–62) | `kb_entries` insert → department `54c8a7ba…` |
+| `20260707153842_*` | none | 9 pages inserted under content node `50fb8694…` (`content_nodes.parent_id` has a foreign key) |
+| `20260707163251_*` | none | `page_blocks` inserted for 11 fixed page IDs listed in the query (`page_blocks.node_id` is `NOT NULL` with a foreign key) |
+| `20260707175304_*` | none | pages inserted under content node `f0ee2a18…` |
+| `20260726090058_*`, `20260726090647_*` | none | test users → department `386ee13b…` and others. Already skipped |
+| `20260726155545_*` | yes: one `ALTER TABLE` adding two columns (lines 1–6) | 14 `dwr_template_fields` rows → template `144d3aa2…` |
+
+Checked and **harmless** on an empty database: `20260705122903_*` (no
+`content_nodes` row exists yet to update), `20260706002555_*` (it creates the
+`price_courses` it looks up, earlier in the same file), `20260721154237_*` (a
+missing calendar gives `NULL`, and the column allows it), `20260726093044_*`,
+`20260726111046_*` and `20260730190948_*` (they update or copy rows they find),
+and `20260721093141_*` (settings, a template and its fields for each existing
+department: none exists yet).
+All other UUID uses are updates, deletes or `WHERE` clauses.
+
+What these statements would have written is already in the source database, and
+step 5 copies all 180 tables. A static review can still miss a case. The apply
+stays safe if it does: each file rolls back on its own, and a re-run resumes.
+✅ **Decided 15 Sep 2026: skip the data, keep the schema.**
+- **The three content-only files** (`153842`, `163251`, `175304`) are not run,
+  like the two seeds.
+- **The two mixed files run their leading schema lines only:** `175005` lines
+  1–62 (the two tables, their grants, policies and triggers, and the two
+  `kb_languages` rows) and `155545` lines 1–6 (the `computed` columns).
+- **In the ledger,** each of the five gets a row with the whole file's checksum
+  and a note saying what did not run.
+
+Nothing is invented, and step 5 brings the real content. The alternative,
+copying the missing rows from Lovable Cloud ahead of each file, was rejected: a
+department, 2 content nodes, 11 pages and a template, plus whatever those need in
+turn, all to be overwritten at step 5.
+
+**Boundaries checked in the committed files** (`git show df414acf:…`, LF):
+- `175005`: line 61 ends the `kb_languages` insert, line 62 is blank, line 63
+  starts the `kb_entries` insert. All 15 schema statements are in lines 1–62,
+  none after.
+- `155545`: line 5 ends the `ALTER TABLE`, line 6 is blank, line 7 starts the
+  content comment. Its one schema statement is in lines 1–6, none after.
+- The three skipped files contain no schema statement.
+
+**Script v2.** `SKIP` becomes a list with a note per file (5), and a new
+`HEAD_LINES` list with `HEAD_NOTE` runs the leading lines of the 2 mixed files.
+For those two, the plan refuses a missing note, a file not longer than its cut,
+or a statement that cannot run in a transaction. The progress marker for the
+two is `h`. 273 lines, 14,524 bytes, LF, ASCII only, sha256
+`8e6286756022f1d539c91ce15299363feea56a2d03b2bf529e97bdd8d6c31f51`.
+
+**Mock-tested, 15 Sep 2026.** The fake started from the server's state (a ledger
+of the first 25 files). It refused any statement containing text unique to one
+of the five cut content statements, each string checked to occur only in its
+own file:
+
+| Case | Result |
+|---|---|
+| plan from 25 applied | `pending: 239 = atomic 227 + not atomic 5 + schema lines only 2 + skipped 5` |
+| plan from empty | `pending: 264 = atomic 251 + not atomic 6 + schema lines only 2 + skipped 5` |
+| a cut longer than its file · a mixed file without a note | `STOP` for each |
+| `155545`'s schema lines fail | `FAILED, schema lines only`, `STOP … rolled back`, ledger 199 |
+| resume to the end | `ledger rows: 264 of 264, with a note: 7`, `done`. The `kb_entries` table and the `computed` columns were each sent once. None of the five cut content statements was sent |
+| plan after that | `pending: 0` |
+
+A first mock run with a broader pattern stopped at `20260721093141_*`, which
+also inserts into `dwr_template_fields`. That was the fake's pattern, not a
+fault, and the file is harmless (above).
+
+**Growth now has all seven of the source's extensions, every version identical.**
+
+**Extensions against the source's seven (§3).** Installed on growth:
+`pg_net` 0.20.3, `pg_stat_statements` 1.11, `pgcrypto` 1.3, `uuid-ossp` 1.1 (all
+in `extensions`), `supabase_vault` 0.3.1 (`vault`), `plpgsql` 1.0. That is six
+of seven, **every version identical**. `pg_cron` is available at 1.6.4, the
+source's version, and not installed.
+
+**`pg_net` is installed**, so `attendance-roll-day` as written would POST to the
+Lovable-hosted app every night at 19:15 UTC. It must be unscheduled before 19:15
+UTC on the day the migrations apply.
+
+The pasted command read `orderby` and `'search_path:'`, yet the query ran and
+printed `search_path: ` with its space: copy-only.
+
+### The apply script: `growth/apply-migrations.sh`
+
+Enroll's `deploy.sh` apply logic, trimmed to a build from empty, and pinned to
+tree `f28ddded7cb1` and 264 files. `--plan` runs every guard and prints counts,
+writing nothing. `--apply` is the real run, and it resumes after a failure. It
+refuses to run:
+- as anyone but root, or outside project `growth`
+- unless growth's `db` is `(healthy)`
+- on another checkout, a dirty one, or with a shared timestamp prefix
+- without `pg_cron`
+- with an empty ledger but tables in `public`
+- with a ledger that is not exactly the first N files
+
+The skipped files get a ledger row with a `note`. Error output is shown with
+JWTs masked. At the end the script prints each cron job's name, schedule and
+whether it calls `lovable.app`, never its command. It stops unless the ledger
+holds 264 rows.
+
+Every guard compares against an exact value, so a query that errors cannot pass.
+Enroll's `apply-migrations.sh` counted an unreachable database as 0 tables.
+
+**Mock-tested on the workstation, 15 Sep 2026.** A fake `docker` answered the
+queries and kept a pretend ledger, against the workstation checkout at
+`df414acf`. Every case behaved as designed:
+
+| Case | Result |
+|---|---|
+| no argument · two arguments | usage, exit 2 · `STOP`, exit 2 |
+| plan on an empty database | `pending: 264 = atomic 256 + not atomic 6 + skipped 2`, nothing written |
+| `pg_cron` missing · database down · empty ledger with tables in `public` · wrong tree | `STOP` for each, nothing written |
+| a not-atomic file runs but its ledger row fails | `STOP … record it by hand` |
+| a not-atomic file fails (file 69) | `STOP … may be half applied`, ledger 68, the JWT in the error masked |
+| resume, then atomic file 150 fails | resumed at 69; `STOP … rolled back … still pending`, ledger 149 |
+| resume to the end | `ledger rows: 264 of 264, with a note: 2`, `done` |
+| plan and apply again after that | `pending: 0`, `nothing pending`, exit 0 |
+| a ledger row deleted from the middle | `STOP: ledger row 10 is …` |
+| one ledger row lost during a run | `STOP: the ledger has '263' rows`, exit 1 |
+
+The first mock run exposed a fault in the fake, not the script: it read three
+migrations' own SQL as queries and dropped their ledger rows. The script's
+prefix guard caught the gap. The end-of-run count check was added after that
+run.
+
+File: 236 lines, 11,748 bytes, LF only, sha256
+`42293a6eeb1c82f98227dff8c332c05e78723e5bd1277fe911eecdb2b4024bd1`.
